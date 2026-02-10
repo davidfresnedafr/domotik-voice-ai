@@ -22,16 +22,21 @@ wss.on("connection", (twilioWs) => {
     });
 
     oaWs.on("open", () => {
-        // Configuración mínima y robusta
         oaWs.send(JSON.stringify({
             type: "session.update",
             session: {
                 modalities: ["text", "audio"],
-                instructions: "You are a bilingual assistant. English is primary. If the user speaks Spanish, answer in Spanish. Say exactly this right now: 'Hello, welcome to Domotik Solutions, how can I help you today?'",
+                instructions: "You are a Domotik assistant. Speak English primarily, Spanish if the user does. BE CONCISE. Start with: 'Hello, how can I help you today?'",
                 voice: "alloy",
                 input_audio_format: "g711_ulaw",
                 output_audio_format: "g711_ulaw",
-                turn_detection: { type: "server_vad" }
+                input_audio_transcription: { model: "whisper-1" }, // ACTIVAMOS TRANSCRIPCIÓN LIGERA
+                turn_detection: { 
+                    type: "server_vad",
+                    threshold: 0.3, // MUCHO MÁS SENSIBLE (Antes 0.5/0.6)
+                    prefix_padding_ms: 500,
+                    silence_duration_ms: 600
+                }
             }
         }));
     });
@@ -39,20 +44,23 @@ wss.on("connection", (twilioWs) => {
     oaWs.on("message", (raw) => {
         const evt = JSON.parse(raw.toString());
 
-        // Disparar saludo solo cuando Twilio nos de el ID
         if (evt.type === "session.updated" && !greeted && streamSid) {
             greeted = true;
-            console.log("🚀 Lanzando saludo final al stream:", streamSid);
+            console.log("🚀 ID Confirmado. Lanzando saludo...");
             oaWs.send(JSON.stringify({ type: "response.create" }));
         }
 
-        // Reenvío de audio sin procesar nada
-        if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
-            twilioWs.send(JSON.stringify({
-                event: "media",
-                streamSid: streamSid,
-                media: { payload: evt.delta }
-            }));
+        if (evt.type === "response.audio.delta" && evt.delta) {
+            twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
+        }
+
+        // LOG CRÍTICO: Aquí veremos qué está entendiendo la IA
+        if (evt.type === "conversation.item.input_audio_transcription.completed") {
+            console.log("🎙️ IA ENTENDIÓ:", evt.transcript);
+        }
+        
+        if (evt.type === "error") {
+            console.error("❌ ERROR DE OPENAI:", evt.error);
         }
     });
 
@@ -61,16 +69,12 @@ wss.on("connection", (twilioWs) => {
         
         if (msg.event === "start") {
             streamSid = msg.start.streamSid;
-            console.log("📞 Twilio Conectado - ID:", streamSid);
-            
-            // Si OpenAI ya abrió, saludamos ahora que tenemos el ID
-            if (oaWs.readyState === WebSocket.OPEN && !greeted) {
-                greeted = true;
-                oaWs.send(JSON.stringify({ type: "response.create" }));
-            }
+            console.log("📞 TWILIO RECIBIENDO AUDIO - ID:", streamSid);
         }
 
         if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
+            // Log de ráfaga para confirmar que el audio fluye (solo verás puntos)
+            process.stdout.write("."); 
             oaWs.send(JSON.stringify({
                 type: "input_audio_buffer.append",
                 audio: msg.media.payload
@@ -78,19 +82,16 @@ wss.on("connection", (twilioWs) => {
         }
     });
 
-    twilioWs.on("close", () => { if (oaWs.readyState === WebSocket.OPEN) oaWs.close(); });
+    twilioWs.on("close", () => { console.log("🏁 Llamada terminada"); if (oaWs.readyState === WebSocket.OPEN) oaWs.close(); });
 });
 
-// XML de Twilio modificado para ser más persistente
 app.post("/twilio/voice", (req, res) => {
     res.type("text/xml").send(`
         <Response>
-            <Say language="en-US">Connecting.</Say>
-            <Connect>
-                <Stream url="wss://${PUBLIC_BASE_URL}/media-stream" />
-            </Connect>
-            <Pause length="30"/>
+            <Say language="en-US">Connecting now.</Say>
+            <Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect>
+            <Pause length="40"/>
         </Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Demo Lista`));
+server.listen(PORT, () => console.log(`🚀 Sistema en puerto ${PORT}`));
