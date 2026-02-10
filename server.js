@@ -2,11 +2,11 @@ import express from "express";
 import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
 
+// Limpieza automática de caracteres invisibles en las variables
 const PORT = process.env.PORT || 3000;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-// Forzamos el modelo correcto aquí por seguridad si la variable falla
-const REALTIME_MODEL = "gpt-4o-realtime-preview"; 
-const PUBLIC_BASE_URL = "domotik-voice-ai.onrender.com";
+const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
+const REALTIME_MODEL = (process.env.REALTIME_MODEL || "gpt-4o-realtime-preview").trim();
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").trim();
 
 const app = express();
 const server = http.createServer(app);
@@ -34,7 +34,10 @@ async function ttsToUlawChunks(text) {
     try {
         const resp = await fetch("https://api.openai.com/v1/audio/speech", {
             method: "POST",
-            headers: { "Authorization": `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+            headers: { 
+                "Authorization": `Bearer ${OPENAI_API_KEY}`, 
+                "Content-Type": "application/json" 
+            },
             body: JSON.stringify({ model: "tts-1", voice: "alloy", input: text, response_format: "pcm" }),
         });
         if (!resp.ok) return [];
@@ -46,23 +49,28 @@ async function ttsToUlawChunks(text) {
     } catch (e) { return []; }
 }
 
-// --- LOGICA PRINCIPAL ---
+// --- LÓGICA DE CONEXIÓN ---
 wss.on("connection", (twilioWs) => {
+    console.log("✅ Twilio conectado");
     let streamSid = null;
     let greeted = false;
     let speaking = false;
     let textBuffer = "";
 
     const oaWs = new WebSocket(`wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`, {
-        headers: { "Authorization": `Bearer ${OPENAI_API_KEY}`, "OpenAI-Beta": "realtime=v1" }
+        headers: { 
+            "Authorization": `Bearer ${OPENAI_API_KEY}`, 
+            "OpenAI-Beta": "realtime=v1" 
+        }
     });
 
     oaWs.on("open", () => {
+        console.log("✅ OpenAI conectado");
         oaWs.send(JSON.stringify({
             type: "session.update",
             session: {
                 modalities: ["text"],
-                instructions: "Eres el asistente de Domotik Solutions. Habla español y sé breve.",
+                instructions: "Eres el asistente de Domotik Solutions. Habla español y sé muy breve.",
                 input_audio_format: "g711_ulaw",
                 output_audio_format: "g711_ulaw",
                 turn_detection: { type: "server_vad" }
@@ -84,7 +92,7 @@ wss.on("connection", (twilioWs) => {
 
         if (evt.type === "session.updated" && !greeted) {
             greeted = true;
-            console.log("🗣️ ENVIANDO SALUDO...");
+            console.log("🗣️ Enviando saludo inicial...");
             oaWs.send(JSON.stringify({
                 type: "conversation.item.create",
                 item: { type: "message", role: "assistant", content: [{ type: "text", text: "Hola, bienvenido a Domotik Solutions. ¿En qué puedo ayudarte hoy?" }] }
@@ -108,10 +116,13 @@ wss.on("connection", (twilioWs) => {
             }
         }
     });
+
+    oaWs.on("error", (e) => console.error("❌ Error OpenAI:", e.message));
+    twilioWs.on("close", () => { if(oaWs.readyState === WebSocket.OPEN) oaWs.close(); });
 });
 
 app.post("/twilio/voice", (req, res) => {
     res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect></Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 READY ON PORT ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
