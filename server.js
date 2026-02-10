@@ -2,17 +2,17 @@ import express from "express";
 import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
 
-// Limpieza automática de caracteres invisibles en las variables
+// Configuración con limpieza de caracteres invisibles
 const PORT = process.env.PORT || 3000;
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
-const REALTIME_MODEL = (process.env.REALTIME_MODEL || "gpt-4o-realtime-preview").trim();
+const REALTIME_MODEL = "gpt-4o-realtime-preview"; 
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").trim();
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/media-stream" });
 
-// --- UTILIDADES DE AUDIO ---
+// --- UTILIDADES DE AUDIO (PCM 24kHz -> uLaw 8kHz) ---
 function linearToMuLawSample(sample) {
     const MU_LAW_MAX = 0x1FFF; const BIAS = 0x84;
     let sign = (sample >> 8) & 0x80; if (sign) sample = -sample;
@@ -34,10 +34,7 @@ async function ttsToUlawChunks(text) {
     try {
         const resp = await fetch("https://api.openai.com/v1/audio/speech", {
             method: "POST",
-            headers: { 
-                "Authorization": `Bearer ${OPENAI_API_KEY}`, 
-                "Content-Type": "application/json" 
-            },
+            headers: { "Authorization": `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
             body: JSON.stringify({ model: "tts-1", voice: "alloy", input: text, response_format: "pcm" }),
         });
         if (!resp.ok) return [];
@@ -46,7 +43,7 @@ async function ttsToUlawChunks(text) {
         const chunks = [];
         for (let i = 0; i < ulawRaw.length; i += 160) { chunks.push(ulawRaw.subarray(i, i + 160).toString("base64")); }
         return chunks;
-    } catch (e) { return []; }
+    } catch (e) { console.error("Error TTS:", e); return []; }
 }
 
 // --- LÓGICA DE CONEXIÓN ---
@@ -58,10 +55,7 @@ wss.on("connection", (twilioWs) => {
     let textBuffer = "";
 
     const oaWs = new WebSocket(`wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`, {
-        headers: { 
-            "Authorization": `Bearer ${OPENAI_API_KEY}`, 
-            "OpenAI-Beta": "realtime=v1" 
-        }
+        headers: { "Authorization": `Bearer ${OPENAI_API_KEY}`, "OpenAI-Beta": "realtime=v1" }
     });
 
     oaWs.on("open", () => {
@@ -90,26 +84,34 @@ wss.on("connection", (twilioWs) => {
         const evt = JSON.parse(raw.toString());
         if (evt.type === "response.text.delta") textBuffer += evt.delta;
 
+        // Saludo inicial al detectar que la sesión está lista
         if (evt.type === "session.updated" && !greeted) {
             greeted = true;
             console.log("🗣️ Enviando saludo inicial...");
             oaWs.send(JSON.stringify({
                 type: "conversation.item.create",
-                item: { type: "message", role: "assistant", content: [{ type: "text", text: "Hola, bienvenido a Domotik Solutions. ¿En qué puedo ayudarte hoy?" }] }
+                item: { type: "message", role: "assistant", content: [{ type: "text", text: "Hola, bienvenido a Domotik Solutions. ¿En qué puedo ayudarte?" }] }
             }));
             oaWs.send(JSON.stringify({ type: "response.create" }));
         }
 
+        // Al terminar de generar texto, convertir a audio y enviar a Twilio
         if (evt.type === "response.done") {
             const content = textBuffer.trim(); textBuffer = "";
             if (content) {
-                console.log("🔊 REPRODUCIENDO:", content);
+                console.log("🔊 Reproduciendo:", content);
                 speaking = true;
                 const chunks = await ttsToUlawChunks(content);
+                
+                // Limpiar buffer de Twilio antes de hablar
+                twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
+
                 let i = 0;
                 const timer = setInterval(() => {
                     if (i >= chunks.length || twilioWs.readyState !== WebSocket.OPEN) {
-                        clearInterval(timer); setTimeout(() => speaking = false, 500); return;
+                        clearInterval(timer);
+                        setTimeout(() => { speaking = false; }, 500);
+                        return;
                     }
                     twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: chunks[i++] } }));
                 }, 20);
@@ -117,12 +119,12 @@ wss.on("connection", (twilioWs) => {
         }
     });
 
-    oaWs.on("error", (e) => console.error("❌ Error OpenAI:", e.message));
-    twilioWs.on("close", () => { if(oaWs.readyState === WebSocket.OPEN) oaWs.close(); });
+    oaWs.on("error", (e) => console.error("❌ OpenAI Error:", e.message));
+    twilioWs.on("close", () => { if (oaWs.readyState === WebSocket.OPEN) oaWs.close(); });
 });
 
 app.post("/twilio/voice", (req, res) => {
     res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect></Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Servidor listo en puerto ${PORT}`));
