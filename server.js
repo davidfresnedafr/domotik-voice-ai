@@ -63,9 +63,10 @@ wss.on("connection", (twilioWs) => {
 
   oaWs.on("open", () => {
     console.log("✅ OpenAI Realtime connected");
-    console.log("➡️ Sending session.update (stable)");
+    console.log("➡️ Sending session.update (audio config)");
 
-    // ✅ Session.update estable (SIN modalities, SIN output, SIN audio)
+    // ✅ Schema recomendado por la guía:
+    // session.audio.input.format / session.audio.output.format
     oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
@@ -76,10 +77,19 @@ If the caller speaks Spanish, respond in Spanish.
 Be concise and professional.
         `.trim(),
 
-        input_audio_format: "g711_ulaw",
-        output_audio_format: "g711_ulaw",
+        // ✅ Importante: combina text+audio (evita "Invalid modalities: ['audio']")
+        modalities: ["text", "audio"],
+
+        // ✅ Audio config (Twilio = g711_ulaw)
+        audio: {
+          input: { format: "g711_ulaw" },
+          output: { format: "g711_ulaw" },
+        },
+
+        // voz (en sesión)
         voice: "marin",
 
+        // VAD
         turn_detection: {
           type: "server_vad",
           create_response: true,
@@ -111,7 +121,7 @@ Be concise and professional.
       if (oaWs.readyState === WebSocket.OPEN) {
         oaWs.send(JSON.stringify({
           type: "input_audio_buffer.append",
-          audio: msg.media.payload,
+          audio: msg.media.payload, // base64 g711_ulaw
         }));
       }
       return;
@@ -129,6 +139,11 @@ Be concise and professional.
     try { oaWs.close(); } catch {}
   });
 
+  twilioWs.on("error", (err) => {
+    console.error("❌ Twilio WS error:", err);
+    try { oaWs.close(); } catch {}
+  });
+
   // -------------------------
   // OpenAI → Twilio (audio)
   // -------------------------
@@ -143,7 +158,7 @@ Be concise and professional.
       return;
     }
 
-    // ✅ Cuando quede aplicada la sesión, pedimos un saludo FORZANDO AUDIO
+    // ✅ Cuando confirme session.updated, pedimos saludo con audio
     if (evt.type === "session.updated" && !greeted) {
       greeted = true;
       console.log("✅ Session updated, requesting greeting audio...");
@@ -151,30 +166,38 @@ Be concise and professional.
       oaWs.send(JSON.stringify({
         type: "response.create",
         response: {
-          modalities: ["audio"],
+          // ✅ Igual: text+audio
+          modalities: ["text", "audio"],
+
+          // ✅ Formato de audio por respuesta (según guía)
+          audio: {
+            output: { format: "g711_ulaw" }
+          },
+
+          // (opcional) voz también aquí
           voice: "marin",
-          output_audio_format: "g711_ulaw",
+
           instructions: "Hello, this is Domotik Solutions. How can I help you today?"
-        }
+        },
       }));
       return;
     }
 
     // barge-in: si el usuario habla, corta audio en Twilio
-    if ((evt.type === "input_audio_buffer.speech_started" || evt.type === "input_audio_buffer.speech_started") && streamSid) {
+    if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
       twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       return;
     }
 
-    // ✅ AUDIO DEL MODELO → TWILIO (soporta varios nombres)
+    // ✅ Audio del modelo (según guía: response.output_audio.delta o response.audio.delta)
     const audioDelta =
       (evt.type === "response.output_audio.delta" && evt.delta) ? evt.delta :
       (evt.type === "response.audio.delta" && evt.delta) ? evt.delta :
-      (evt.type === "output_audio.delta" && evt.delta) ? evt.delta :
       null;
 
     if (audioDelta && streamSid) {
       console.log("🔊 audio delta bytes:", audioDelta.length);
+
       twilioWs.send(JSON.stringify({
         event: "media",
         streamSid,
