@@ -24,13 +24,24 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: "Your name is Elena. Answer in English. If they speak Spanish, switch to Spanish. Professional tone.",
+        instructions: `
+          Your name is Elena, assistant for Domotik Solutions.
+          
+          TONE & ACCENT:
+          - English: Use a professional, neutral American accent.
+          - Spanish: Use a polite, professional accent from Bogotá, Colombia (Rolo). 
+            Use phrases like "Con mucho gusto", "A la orden", "Cuénteme en qué puedo colaborarle".
+          
+          BEHAVIOR:
+          - You MUST start the conversation in English with the specific greeting provided.
+          - Switch to Spanish only if the customer speaks Spanish.
+          - If the user says goodbye (bye, goodbye, adiós, hasta luego), say a brief farewell and the call will hang up.`,
         voice: "shimmer",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         turn_detection: { 
           type: "server_vad", 
-          threshold: 0.5, // ⬅️ Bajamos un poco para que te escuche mejor
+          threshold: 0.5,
           prefix_padding_ms: 300,
           silence_duration_ms: 800 
         }
@@ -42,15 +53,22 @@ wss.on("connection", (twilioWs) => {
     const evt = JSON.parse(raw.toString());
     if (evt.type === "session.updated") { sessionReady = true; if (streamSid) tryGreet(); }
     
-    // 🔥 ESTO ES LO QUE HACE QUE SE CALLE:
+    // Interrupción: Elena se calla si el cliente habla
     if (evt.type === "input_audio_buffer.speech_started") {
-        console.log("Detectada voz del cliente: Deteniendo Elena...");
-        if (streamSid) {
-            // Mandamos señal a Twilio para vaciar el parlante del cliente
-            twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
-        }
-        // Mandamos señal a OpenAI para que deje de generar audio
+        if (streamSid) twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
         oaWs.send(JSON.stringify({ type: "response.cancel" }));
+    }
+
+    // Lógica de Auto-colgado
+    if (evt.type === "response.done") {
+      const transcript = evt.response?.output?.[0]?.content?.[0]?.transcript?.toLowerCase() || "";
+      const farewells = ["bye", "goodbye", "adiós", "hasta luego", "que tenga un buen día"];
+      
+      if (farewells.some(word => transcript.includes(word))) {
+        setTimeout(() => {
+          if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close();
+        }, 2000); 
+      }
     }
 
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
@@ -65,7 +83,8 @@ wss.on("connection", (twilioWs) => {
         type: "response.create",
         response: { 
           modalities: ["audio", "text"], 
-          instructions: "Greet in English: 'Hi, thanks for calling Domotik Solutions. I am Elena, how can I help you?'" 
+          // ✅ SALUDO SOLICITADO
+          instructions: "Greet exactly like this: 'Hello, you are speaking with the assistant from Domotik Solutions. How can I help you?'" 
         }
       }));
     }
@@ -86,4 +105,4 @@ app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect><Pause length="40"/></Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena: Interrupción y Fluidez activadas`));
+server.listen(PORT, () => console.log(`🚀 Elena: Saludo personalizado activo`));
