@@ -1,10 +1,20 @@
 import express from "express";
 import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
+import nodemailer from "nodemailer"; 
 
 const PORT = process.env.PORT || 10000;
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const PUBLIC_BASE_URL = "domotik-voice-ai.onrender.com";
+
+// --- TUS CREDENCIALES ---
+const MI_CORREO = "df@domotiksolutions.com"; 
+const MI_PASSWORD = "2020121058David."; 
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: { user: MI_CORREO, pass: MI_PASSWORD }
+});
 
 const app = express();
 const server = http.createServer(app);
@@ -15,11 +25,7 @@ wss.on("connection", (twilioWs) => {
   let greeted = false;
   let sessionReady = false;
   let fullTranscript = "";
-
-  // Límite de 5 minutos para controlar el gasto de créditos
-  const callTimeout = setTimeout(() => {
-    if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close();
-  }, 300000);
+  let startTime = Date.now();
 
   const oaWs = new WebSocket("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "OpenAI-Beta": "realtime=v1" }
@@ -30,35 +36,29 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        // ✅ INSTRUCCIONES PARA VOZ AMABLE Y LATINA
+        // ✅ NUEVA LÓGICA: Prioridad Inglés
         instructions: `
-          Eres 'Elena', la asistente amable de Domotik Solutions. 
-          TU TONO: Dulce, servicial y muy profesional. 
-          TU ACENTO: Habla en Español Latino neutro (evita acento de España).
-          TU OBJETIVO: Ayudar al cliente con su hogar inteligente y agendar una visita técnica.
-          REGLAS:
-          1. Si te hablan en inglés, responde en inglés, pero tu prioridad es el español.
-          2. No seas cortante. Saluda con calidez.
-          3. Para agendar la cita, pide el nombre y un horario.
-          4. Si el cliente dice 'adiós' o 'bye', despídete con mucha cortesía antes de terminar.`,
-        voice: "shimmer", // ✅ Voz femenina amable
-        input_audio_format: "g711_ulaw",
-        output_audio_format: "g711_ulaw",
+          Your name is Elena, virtual assistant for Domotik Solutions.
+          PRIMARY LANGUAGE: English.
+          STRICT RULE: Start the conversation in English. 
+          Only switch to Spanish if the customer speaks Spanish to you or specifically asks to speak Spanish.
+          TONE: Professional, helpful, and warm.
+          GOAL: Schedule technical visits. Capture the customer's name and their specific interest in home automation.
+          If they say goodbye, say a warm farewell and the system will hang up.`,
+        voice: "shimmer",
         input_audio_transcription: { model: "whisper-1" },
-        turn_detection: { 
-          type: "server_vad", 
-          threshold: 0.4, 
-          silence_duration_ms: 800 // ✅ Más tiempo de espera para no ser cortante
-        }
+        turn_detection: { type: "server_vad", threshold: 0.4, silence_duration_ms: 800 }
       }
     }));
   });
 
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
-    if (evt.type === "session.updated") { sessionReady = true; if (streamSid) tryGreet(); }
+    if (evt.type === "session.updated") { 
+      sessionReady = true; 
+      if (streamSid) tryGreet(); 
+    }
 
-    // Interrupción suave
     if (evt.type === "input_audio_buffer.speech_started") {
       if (streamSid) twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       oaWs.send(JSON.stringify({ type: "response.cancel" }));
@@ -68,31 +68,30 @@ wss.on("connection", (twilioWs) => {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
 
-    // Registro de lo hablado para el reporte
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
-      fullTranscript += `Cliente: ${evt.transcript}\n`;
+      fullTranscript += `Customer: ${evt.transcript}\n`;
     }
     if (evt.type === "response.audio_transcript.done") {
       fullTranscript += `Elena: ${evt.transcript}\n`;
     }
 
-    // Cierre inteligente
     if (evt.type === "response.done") {
       const text = (evt.response?.output?.[0]?.content?.[0]?.transcript || "").toLowerCase();
-      if (text.includes("adiós") || text.includes("bye") || text.includes("luego")) {
-        setTimeout(() => { if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close(); }, 3000);
+      if (text.includes("goodbye") || text.includes("adiós") || text.includes("bye")) {
+        setTimeout(() => { if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close(); }, 2500);
       }
     }
   });
 
   const tryGreet = () => {
-    if (!greeted && sessionReady) {
+    if (!greeted && sessionReady && streamSid) {
       greeted = true;
+      // ✅ SALUDO INICIAL EN INGLÉS
       oaWs.send(JSON.stringify({
         type: "response.create",
         response: { 
           modalities: ["audio", "text"], 
-          instructions: "Saluda cálidamente: 'Hola, gracias por llamar a Domotik Solutions. Soy Elena, ¿en qué puedo ayudarle hoy?'" 
+          instructions: "Greet the customer: 'Thank you for calling Domotik Solutions. This is Elena, how can I help you today?'" 
         }
       }));
     }
@@ -100,23 +99,41 @@ wss.on("connection", (twilioWs) => {
 
   twilioWs.on("message", (raw) => {
     const msg = JSON.parse(raw.toString());
-    if (msg.event === "start") { streamSid = msg.start.streamSid; tryGreet(); }
+    if (msg.event === "start") { 
+      streamSid = msg.start.streamSid; 
+      tryGreet(); 
+    }
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
       oaWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: msg.media.payload }));
     }
   });
 
-  twilioWs.on("close", () => {
-    clearTimeout(callTimeout);
-    console.log("\n--- DATOS DE LA VENTA / CITA ---");
-    console.log(fullTranscript); 
-    console.log("-------------------------------\n");
+  twilioWs.on("close", async () => {
+    const duration = (Date.now() - startTime) / 1000;
+    if (duration > 15 && fullTranscript.length > 30) {
+      const mailOptions = {
+        from: MI_CORREO,
+        to: MI_CORREO,
+        subject: '🚀 Domotik Lead - Summary',
+        text: `Conversation Details:\n\n${fullTranscript}\n\nDuration: ${duration.toFixed(2)}s`
+      };
+      try {
+        await transporter.sendMail(mailOptions);
+        console.log("✅ Report sent to df@domotiksolutions.com");
+      } catch (e) { console.error("❌ Email error:", e); }
+    }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
 });
 
 app.post("/twilio/voice", (req, res) => {
-  res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect><Pause length="40"/></Response>`);
+  res.type("text/xml").send(`
+    <Response>
+      <Connect>
+        <Stream url="wss://${PUBLIC_BASE_URL}/media-stream" />
+      </Connect>
+      <Pause length="40"/>
+    </Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena activa en Domotik Solutions`));
+server.listen(PORT, () => console.log(`🚀 Elena Bilingüe (English Priority) Active`));
