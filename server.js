@@ -35,130 +35,106 @@ wss.on("connection", (twilioWs) => {
   const tryGreet = () => {
     if (!greeted && streamSid && sessionReady && oaWs.readyState === WebSocket.OPEN) {
       greeted = true;
-      console.log("🚀 Canal listo. Lanzando saludo de ventas...");
-
+      console.log("🚀 Iniciando conversación con voz Echo...");
       oaWs.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
-
-      oaWs.send(
-        JSON.stringify({
-          type: "response.create",
-          response: {
-            modalities: ["audio", "text"], 
-            instructions: "Greeting: 'Hola, gracias por llamar a Domotik Solutions. ¿En qué puedo ayudarle con su proyecto de automatización hoy?'",
-          },
-        })
-      );
+      oaWs.send(JSON.stringify({
+        type: "response.create",
+        response: {
+          modalities: ["audio", "text"], 
+          instructions: "Greeting: 'Hola, bienvenido a Domotik Solutions. Soy su asistente virtual, ¿en qué puedo ayudarle hoy?'",
+        },
+      }));
     }
   };
 
   oaWs.on("open", () => {
-    console.log("✅ OpenAI WS conectado");
-    oaWs.send(
-      JSON.stringify({
-        type: "session.update",
-        session: {
-          modalities: ["text", "audio"],
-          // CONFIGURACIÓN DE COMPORTAMIENTO COMERCIAL
-          instructions: `
-            Eres el Asistente Virtual de Ventas de 'Domotik Solutions'. 
-            TU OBJETIVO PRINCIPAL: Convencer al cliente de las ventajas de la domótica y AGENDAR UNA VISITA técnica en su domicilio.
-            
-            REGLAS DE CONVERSACIÓN:
-            1. Preséntate siempre como parte de Domotik Solutions.
-            2. Si preguntan qué hacemos, explica que automatizamos luces, persianas, seguridad y sonido para casas inteligentes.
-            3. No hables de temas personales, política o cosas ajenas a la empresa.
-            4. Si el cliente parece interesado, di: 'Lo ideal sería que un técnico visite su casa para darle un presupuesto exacto. ¿Le gustaría agendar una cita?'.
-            5. Si acepta la cita, pide: Nombre, un número de contacto y si prefiere mañana o tarde.
-            6. Sé breve y profesional. Usa un tono entusiasta pero serio.
-            7. Habla en el idioma que el cliente elija (Español o Inglés).`,
-          voice: "alloy",
-          input_audio_format: "g711_ulaw",
-          output_audio_format: "g711_ulaw",
-          input_audio_transcription: { model: "whisper-1" },
-          turn_detection: {
-            type: "server_vad",
-            threshold: 0.3,
-            prefix_padding_ms: 500,
-            silence_duration_ms: 600,
-          },
+    console.log("✅ OpenAI conectado - Voz: Echo");
+    oaWs.send(JSON.stringify({
+      type: "session.update",
+      session: {
+        modalities: ["text", "audio"],
+        instructions: `
+          Eres el Asistente de Ventas de Domotik Solutions. 
+          PERSONALIDAD: Habla con seguridad, calma y profesionalismo.
+          OBJETIVO: Agendar visitas técnicas de domótica.
+          REGLA DE CIERRE: Si el cliente dice 'adiós' o 'bye', despídete y cuelga.
+          INTERRUPCIÓN: Detente de inmediato si el cliente te habla.`,
+        // ✅ VOZ ECHO: Es la opción más robusta y humana disponible.
+        voice: "echo", 
+        input_audio_format: "g711_ulaw",
+        output_audio_format: "g711_ulaw",
+        input_audio_transcription: { model: "whisper-1" },
+        turn_detection: {
+          type: "server_vad",
+          threshold: 0.4,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 500,
         },
-      })
-    );
+      },
+    }));
   });
 
   oaWs.on("message", (raw) => {
     let evt;
-    try {
-      evt = JSON.parse(raw.toString());
-    } catch (e) { return; }
+    try { evt = JSON.parse(raw.toString()); } catch (e) { return; }
 
-    if (evt.type === "session.updated") {
-      sessionReady = true;
-      tryGreet();
+    if (evt.type === "session.updated") { sessionReady = true; tryGreet(); }
+
+    // GESTIÓN DE INTERRUPCIONES
+    if (evt.type === "input_audio_buffer.speech_started") {
+      console.log("🤫 Cliente hablando: Deteniendo IA...");
+      if (streamSid) { twilioWs.send(JSON.stringify({ event: "clear", streamSid })); }
+      oaWs.send(JSON.stringify({ type: "response.cancel" }));
     }
 
-    if (evt.type === "response.created") {
-      console.log("🤖 OpenAI generando respuesta comercial...");
-    }
-
+    // ENVÍO DE AUDIO
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
-      twilioWs.send(
-        JSON.stringify({
-          event: "media",
-          streamSid,
-          media: { payload: evt.delta },
-        })
-      );
+      twilioWs.send(JSON.stringify({
+        event: "media",
+        streamSid,
+        media: { payload: evt.delta },
+      }));
+    }
+
+    // LÓGICA DE CIERRE AUTOMÁTICO
+    if (evt.type === "response.done") {
+      const transcript = evt.response?.output?.[0]?.content?.[0]?.transcript || "";
+      const text = transcript.toLowerCase();
+      if (text.includes("adiós") || text.includes("bye") || text.includes("hasta luego")) {
+        console.log("🏁 Despedida detectada. Cerrando llamada...");
+        setTimeout(() => { if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close(); }, 2500);
+      }
     }
 
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
-      console.log("\n🎙️ CLIENTE DIJO:", evt.transcript);
-    }
-
-    if (evt.type === "error") {
-      console.error("❌ ERROR:", evt.error);
+      console.log("\n🎙️ CLIENTE:", evt.transcript);
     }
   });
 
   twilioWs.on("message", (raw) => {
     let msg;
-    try {
-      msg = JSON.parse(raw.toString());
-    } catch (e) { return; }
-
+    try { msg = JSON.parse(raw.toString()); } catch (e) { return; }
     if (msg.event === "start") {
       streamSid = msg.start.streamSid;
-      console.log("📞 LLAMADA ENTRANTE - ID:", streamSid);
+      console.log("📞 Llamada activa:", streamSid);
       tryGreet();
     }
-
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
-      process.stdout.write("."); // Confirmación de flujo de audio
-      oaWs.send(
-        JSON.stringify({
-          type: "input_audio_buffer.append",
-          audio: msg.media.payload,
-        })
-      );
+      oaWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: msg.media.payload }));
     }
   });
 
-  twilioWs.on("close", () => {
-    console.log("\n🏁 Llamada terminada");
-    if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
+  twilioWs.on("close", () => { 
+    if (oaWs.readyState === WebSocket.OPEN) oaWs.close(); 
   });
 });
 
 app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`
 <Response>
-  <Connect>
-    <Stream url="wss://${PUBLIC_BASE_URL}/media-stream" />
-  </Connect>
+  <Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect>
   <Pause length="40"/>
 </Response>`);
 });
 
-app.get("/", (req, res) => res.send("Domotik Sales Bot Active"));
-
-server.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Sistema Domotik con voz 'Echo' activo`));
