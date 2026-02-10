@@ -4,11 +4,10 @@ import WebSocket, { WebSocketServer } from "ws";
 
 const PORT = process.env.PORT || 10000;
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
-const PUBLIC_BASE_URL = "domotik-voice-ai.onrender.com";
+const PUBLIC_BASE_URL =
+  process.env.PUBLIC_BASE_URL || "domotik-voice-ai.onrender.com";
 
-if (!OPENAI_API_KEY) {
-  console.error("❌ Falta OPENAI_API_KEY en variables de entorno");
-}
+if (!OPENAI_API_KEY) console.error("❌ Falta OPENAI_API_KEY");
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -33,25 +32,19 @@ wss.on("connection", (twilioWs) => {
   );
 
   const tryGreet = () => {
-    if (
-      !greeted &&
-      streamSid &&
-      sessionReady &&
-      oaWs.readyState === WebSocket.OPEN
-    ) {
+    if (!greeted && streamSid && sessionReady && oaWs.readyState === WebSocket.OPEN) {
       greeted = true;
-      console.log("🚀 Lógica lista. Enviando saludo corregido...");
+      console.log("🚀 Listo (session + streamSid). Enviando saludo...");
 
       oaWs.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
 
-      // ✅ SOLUCIÓN AL ERROR DE IMAGE_AF31A5.PNG:
-      // Se agregaron ambas modalidades ['audio', 'text'] para que OpenAI acepte la petición.
+      // ✅ IMPORTANTE: modalities debe ser ["audio","text"]
       oaWs.send(
         JSON.stringify({
           type: "response.create",
           response: {
-            modalities: ["audio", "text"], 
-            instructions: "Greeting: 'Hello, welcome to Domotik Solutions, how can I help you today?'",
+            modalities: ["audio", "text"],
+            instructions: "Hello, how can I help you today?",
           },
         })
       );
@@ -66,7 +59,8 @@ wss.on("connection", (twilioWs) => {
         type: "session.update",
         session: {
           modalities: ["text", "audio"],
-          instructions: "You are a Domotik assistant. Speak English primarily, Spanish if the user does. Be concise.",
+          instructions:
+            "You are a Domotik assistant. Speak English primarily, Spanish if the user does. Be concise.",
           voice: "alloy",
           input_audio_format: "g711_ulaw",
           output_audio_format: "g711_ulaw",
@@ -86,16 +80,17 @@ wss.on("connection", (twilioWs) => {
     let evt;
     try {
       evt = JSON.parse(raw.toString());
-    } catch (e) { return; }
+    } catch {
+      return;
+    }
 
     if (evt.type === "session.updated") {
       sessionReady = true;
-      console.log("✅ Configuración de sesión aplicada");
+      console.log("✅ session.updated");
       tryGreet();
     }
 
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
-      // Enviamos audio a Twilio
       twilioWs.send(
         JSON.stringify({
           event: "media",
@@ -106,7 +101,7 @@ wss.on("connection", (twilioWs) => {
     }
 
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
-      console.log("🎙️ Usuario dijo:", evt.transcript);
+      console.log("🎙️ IA ENTENDIÓ:", evt.transcript);
     }
 
     if (evt.type === "error") {
@@ -118,15 +113,23 @@ wss.on("connection", (twilioWs) => {
     let msg;
     try {
       msg = JSON.parse(raw.toString());
-    } catch (e) { return; }
+    } catch {
+      return;
+    }
 
     if (msg.event === "start") {
       streamSid = msg.start.streamSid;
-      console.log("📞 Llamada iniciada. ID Twilio:", streamSid);
+      console.log("📞 TWILIO RECIBIENDO AUDIO - ID:", streamSid);
+
+      if (oaWs.readyState === WebSocket.OPEN) {
+        oaWs.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
+      }
+
       tryGreet();
     }
 
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
+      process.stdout.write(".");
       oaWs.send(
         JSON.stringify({
           type: "input_audio_buffer.append",
@@ -137,7 +140,7 @@ wss.on("connection", (twilioWs) => {
   });
 
   twilioWs.on("close", () => {
-    console.log("🏁 Conexión cerrada");
+    console.log("🏁 Llamada terminada");
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
 });
@@ -145,7 +148,7 @@ wss.on("connection", (twilioWs) => {
 app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`
 <Response>
-  <Say language="en-US">Connecting.</Say>
+  <Say language="en-US">Connecting now.</Say>
   <Connect>
     <Stream url="wss://${PUBLIC_BASE_URL}/media-stream" />
   </Connect>
@@ -153,6 +156,6 @@ app.post("/twilio/voice", (req, res) => {
 </Response>`);
 });
 
-app.get("/", (req, res) => res.send("Servidor Domotik Activo"));
+app.get("/", (_, res) => res.send("OK"));
 
-server.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Sistema en puerto ${PORT}`));
