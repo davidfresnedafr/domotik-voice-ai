@@ -68,8 +68,8 @@ wss.on("connection", (twilioWs) => {
   oaWs.on("open", () => {
     console.log("✅ OpenAI Realtime connected");
 
-    // ✅ session.update CORRECTO (sin session.audio)
-    oaWs.send(JSON.stringify({
+    // ✅ Enviamos session.update y ESPERAMOS session.updated para pedir el saludo
+    const sessionUpdate = {
       type: "session.update",
       session: {
         instructions: `
@@ -80,27 +80,27 @@ Be concise and professional.
 If the caller asks for a human or it’s urgent, say you will transfer.
         `.trim(),
 
-        // ✅ Campos correctos
+        // ✅ Fuerza audio en salida
+        output_modalities: ["audio"],
+
+        // ✅ Twilio Media Streams usa G.711 u-law (PCMU)
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
+
+        // voz
         voice: "marin",
 
-        // ✅ Turn detection
+        // VAD
         turn_detection: {
           type: "server_vad",
           create_response: true,
           interrupt_response: true,
         },
       },
-    }));
+    };
 
-    // ✅ La IA habla primero (para evitar silencio)
-    oaWs.send(JSON.stringify({
-      type: "response.create",
-      response: {
-        instructions: "Hello, this is Domotik Solutions. How can I help you today?"
-      },
-    }));
+    console.log("➡️ Sending session.update");
+    oaWs.send(JSON.stringify(sessionUpdate));
   });
 
   oaWs.on("error", (err) => {
@@ -166,9 +166,26 @@ If the caller asks for a human or it’s urgent, say you will transfer.
       return;
     }
 
-    // Debug de errores del API
+    // ✅ DEBUG: ver qué eventos llegan de OpenAI
+    console.log("📩 OpenAI event:", evt.type);
+
+    // Si hay error del API, verlo
     if (evt.type === "error") {
       console.error("❌ OpenAI event error:", evt.error);
+      return;
+    }
+
+    // ✅ Cuando OpenAI confirma sesión aplicada, pedimos saludo con audio
+    if (evt.type === "session.updated") {
+      console.log("✅ Session updated, requesting greeting audio...");
+
+      oaWs.send(JSON.stringify({
+        type: "response.create",
+        response: {
+          output_modalities: ["audio"],
+          instructions: "Hello, this is Domotik Solutions. How can I help you today?"
+        },
+      }));
       return;
     }
 
