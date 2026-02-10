@@ -51,6 +51,9 @@ wss.on("connection", (twilioWs) => {
     return;
   }
 
+  // -------------------------
+  // OpenAI Realtime WS
+  // -------------------------
   const oaWs = new WebSocket(openaiWsUrl(REALTIME_MODEL), {
     headers: {
       Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -62,11 +65,14 @@ wss.on("connection", (twilioWs) => {
     console.log("✅ OpenAI Realtime connected");
     console.log("➡️ Sending session.update");
 
-    // ✅ Campos correctos según docs actuales:
-    // modalities + input_audio_format + output_audio_format + voice
+    // ✅ FIX CLAVE:
+    // modalities es STRING ("audio" o "text"), NO array
+    // output va dentro de session.output
     oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
+        model: REALTIME_MODEL,
+
         instructions: `
 You are the Domotik Solutions voice assistant.
 You handle CCTV, access control, networking and smart home services.
@@ -75,12 +81,16 @@ Be concise and professional.
 If the caller asks for a human or it’s urgent, say you will transfer.
         `.trim(),
 
-        modalities: ["audio"],
+        modalities: "audio",
 
+        // Twilio Media Streams (PCMU / g711_ulaw)
         input_audio_format: "g711_ulaw",
-        output_audio_format: "g711_ulaw",
 
-        voice: "marin",
+        // salida de audio (formato + voz)
+        output: {
+          format: "g711_ulaw",
+          voice: "marin",
+        },
 
         turn_detection: {
           type: "server_vad",
@@ -113,7 +123,7 @@ If the caller asks for a human or it’s urgent, say you will transfer.
       if (oaWs.readyState === WebSocket.OPEN) {
         oaWs.send(JSON.stringify({
           type: "input_audio_buffer.append",
-          audio: msg.media.payload,
+          audio: msg.media.payload, // base64 g711_ulaw
         }));
       }
       return;
@@ -122,6 +132,7 @@ If the caller asks for a human or it’s urgent, say you will transfer.
     if (msg.event === "stop") {
       console.log("🛑 Stream stopped");
       try { oaWs.close(); } catch {}
+      return;
     }
   });
 
@@ -149,7 +160,7 @@ If the caller asks for a human or it’s urgent, say you will transfer.
       return;
     }
 
-    // Cuando la sesión se actualiza, pedimos el saludo (solo 1 vez)
+    // cuando quede aplicada la sesión, pedimos saludo 1 vez
     if (evt.type === "session.updated" && !greeted) {
       greeted = true;
       console.log("✅ Session updated, requesting greeting audio...");
@@ -157,20 +168,20 @@ If the caller asks for a human or it’s urgent, say you will transfer.
       oaWs.send(JSON.stringify({
         type: "response.create",
         response: {
-          modalities: ["audio"],
-          instructions: "Hello, this is Domotik Solutions. How can I help you today?"
+          modalities: "audio",
+          instructions: "Hello, this is Domotik Solutions. How can I help you today?",
         },
       }));
       return;
     }
 
-    // Barge-in: si el usuario habla, limpiamos audio en Twilio
+    // barge-in: si el usuario habla, corta audio en Twilio
     if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
       twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       return;
     }
 
-    // Audio de IA → Twilio
+    // audio de IA → Twilio
     if (
       (evt.type === "response.audio.delta" ||
         evt.type === "response.output_audio.delta") &&
@@ -182,8 +193,9 @@ If the caller asks for a human or it’s urgent, say you will transfer.
       twilioWs.send(JSON.stringify({
         event: "media",
         streamSid,
-        media: { payload: evt.delta },
+        media: { payload: evt.delta }, // base64 g711_ulaw
       }));
+      return;
     }
   });
 });
