@@ -36,15 +36,14 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        // ✅ NUEVA LÓGICA: Prioridad Inglés
+        // ✅ LÓGICA BILINGÜE: Inicia en Inglés, cambia si le hablan en Español
         instructions: `
           Your name is Elena, virtual assistant for Domotik Solutions.
-          PRIMARY LANGUAGE: English.
-          STRICT RULE: Start the conversation in English. 
-          Only switch to Spanish if the customer speaks Spanish to you or specifically asks to speak Spanish.
-          TONE: Professional, helpful, and warm.
-          GOAL: Schedule technical visits. Capture the customer's name and their specific interest in home automation.
-          If they say goodbye, say a warm farewell and the system will hang up.`,
+          PRIMARY LANGUAGE: English. You MUST start the conversation in English.
+          Only switch to Spanish if the customer speaks Spanish first.
+          TONE: Professional and warm.
+          GOAL: Schedule technical visits for home automation. Capture name and interest.
+          If they say 'goodbye' or 'adiós', say farewell and the call will end.`,
         voice: "shimmer",
         input_audio_transcription: { model: "whisper-1" },
         turn_detection: { type: "server_vad", threshold: 0.4, silence_duration_ms: 800 }
@@ -54,10 +53,7 @@ wss.on("connection", (twilioWs) => {
 
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
-    if (evt.type === "session.updated") { 
-      sessionReady = true; 
-      if (streamSid) tryGreet(); 
-    }
+    if (evt.type === "session.updated") { sessionReady = true; if (streamSid) tryGreet(); }
 
     if (evt.type === "input_audio_buffer.speech_started") {
       if (streamSid) twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
@@ -86,12 +82,12 @@ wss.on("connection", (twilioWs) => {
   const tryGreet = () => {
     if (!greeted && sessionReady && streamSid) {
       greeted = true;
-      // ✅ SALUDO INICIAL EN INGLÉS
+      // ✅ SALUDO INICIAL FORZADO EN INGLÉS
       oaWs.send(JSON.stringify({
         type: "response.create",
         response: { 
           modalities: ["audio", "text"], 
-          instructions: "Greet the customer: 'Thank you for calling Domotik Solutions. This is Elena, how can I help you today?'" 
+          instructions: "Greet clearly in English: 'Thank you for calling Domotik Solutions. This is Elena, how can I help you today?'" 
         }
       }));
     }
@@ -99,10 +95,7 @@ wss.on("connection", (twilioWs) => {
 
   twilioWs.on("message", (raw) => {
     const msg = JSON.parse(raw.toString());
-    if (msg.event === "start") { 
-      streamSid = msg.start.streamSid; 
-      tryGreet(); 
-    }
+    if (msg.event === "start") { streamSid = msg.start.streamSid; tryGreet(); }
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
       oaWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: msg.media.payload }));
     }
@@ -114,12 +107,11 @@ wss.on("connection", (twilioWs) => {
       const mailOptions = {
         from: MI_CORREO,
         to: MI_CORREO,
-        subject: '🚀 Domotik Lead - Summary',
-        text: `Conversation Details:\n\n${fullTranscript}\n\nDuration: ${duration.toFixed(2)}s`
+        subject: '🚀 Lead Domotik Solutions - Summary',
+        text: `Conversation:\n\n${fullTranscript}\n\nDuration: ${duration.toFixed(2)}s`
       };
       try {
         await transporter.sendMail(mailOptions);
-        console.log("✅ Report sent to df@domotiksolutions.com");
       } catch (e) { console.error("❌ Email error:", e); }
     }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
@@ -127,13 +119,7 @@ wss.on("connection", (twilioWs) => {
 });
 
 app.post("/twilio/voice", (req, res) => {
-  res.type("text/xml").send(`
-    <Response>
-      <Connect>
-        <Stream url="wss://${PUBLIC_BASE_URL}/media-stream" />
-      </Connect>
-      <Pause length="40"/>
-    </Response>`);
+  res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect><Pause length="40"/></Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena Bilingüe (English Priority) Active`));
+server.listen(PORT, () => console.log(`🚀 Elena Bilingüe activa`));
