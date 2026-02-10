@@ -10,7 +10,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/media-stream" });
 
-// Mantener el servidor despierto
+// Mantener despierto el servidor
 setInterval(() => {
     fetch(`https://${PUBLIC_BASE_URL}/twilio/voice`, { method: 'POST' }).catch(() => {});
 }, 300000);
@@ -31,11 +31,17 @@ wss.on("connection", (twilioWs) => {
             type: "session.update",
             session: {
                 modalities: ["text", "audio"], 
-                instructions: "Saluda inmediatamente diciendo: 'Hola, bienvenido a Domotik Solutions, ¿en qué puedo ayudarte?'. Sé muy breve.",
+                // NUEVAS INSTRUCCIONES BILINGÜES
+                instructions: "You are the Domotik Solutions assistant. Your main language is English, but you are perfectly bilingual. If the user speaks Spanish, respond in Spanish. If they speak English, respond in English. Be concise and friendly. Start by saying: 'Hello, welcome to Domotik Solutions, how can I help you today?'",
                 voice: "alloy",
                 input_audio_format: "g711_ulaw",
                 output_audio_format: "g711_ulaw",
-                turn_detection: { type: "server_vad" }
+                turn_detection: { 
+                    type: "server_vad",
+                    threshold: 0.5, // Ajuste para detectar mejor la voz humana
+                    prefix_padding_ms: 300,
+                    silence_duration_ms: 500 
+                }
             }
         }));
     });
@@ -43,14 +49,11 @@ wss.on("connection", (twilioWs) => {
     oaWs.on("message", (raw) => {
         const evt = JSON.parse(raw.toString());
 
-        // SALUDO CON RETRASO DE SEGURIDAD
         if (evt.type === "session.updated" && !greeted) {
             greeted = true;
-            console.log("🗣️ Canal listo. Esperando estabilidad...");
             setTimeout(() => {
-                console.log("🚀 Lanzando saludo ahora!");
                 oaWs.send(JSON.stringify({ type: "response.create" }));
-            }, 1500); // 1.5 segundos de espera para que Twilio enganche el audio
+            }, 1000); 
         }
 
         if (evt.type === "response.audio.delta" && evt.delta) {
@@ -59,6 +62,11 @@ wss.on("connection", (twilioWs) => {
                 streamSid,
                 media: { payload: evt.delta }
             }));
+        }
+
+        // Log para ver qué entiende la IA (ayuda a debuguear si no responde)
+        if (evt.type === "conversation.item.input_audio_transcription.completed") {
+            console.log("User said:", evt.transcript);
         }
     });
 
@@ -76,10 +84,9 @@ wss.on("connection", (twilioWs) => {
 app.post("/twilio/voice", (req, res) => {
     res.type("text/xml").send(`
         <Response>
-            <Say language="es-MX">Conectando con Domotik.</Say>
             <Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect>
-            <Pause length="30"/>
+            <Pause length="40"/>
         </Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Puerto ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Bilingüe listo en puerto ${PORT}`));
