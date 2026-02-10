@@ -44,6 +44,7 @@ wss.on("connection", (twilioWs) => {
 
   let streamSid = null;
   let greeted = false;
+  let openaiReady = false;
 
   if (!OPENAI_API_KEY) {
     console.error("❌ Missing OPENAI_API_KEY in Render Environment Variables");
@@ -63,48 +64,59 @@ wss.on("connection", (twilioWs) => {
 
   oaWs.on("open", () => {
     console.log("✅ OpenAI Realtime connected");
-    console.log("➡️ Sending session.update");
+    openaiReady = true;
 
-    // ✅ FIX CLAVE:
-    // modalities es STRING ("audio" o "text"), NO array
-    // output va dentro de session.output
-    oaWs.send(JSON.stringify({
+    // ✅ Session.update “estable”: SIN modalities, SIN audio, SIN output
+    // Usamos solo campos core: voice + input_audio_format + output_audio_format + turn_detection
+    const sessionUpdate = {
       type: "session.update",
       session: {
-        model: REALTIME_MODEL,
-
         instructions: `
 You are the Domotik Solutions voice assistant.
 You handle CCTV, access control, networking and smart home services.
 If the caller speaks Spanish, respond in Spanish.
 Be concise and professional.
-If the caller asks for a human or it’s urgent, say you will transfer.
         `.trim(),
 
-        modalities: "audio",
-
-        // Twilio Media Streams (PCMU / g711_ulaw)
+        // formatos soportados (Twilio Media Streams = g711_ulaw)
         input_audio_format: "g711_ulaw",
+        output_audio_format: "g711_ulaw",
 
-        // salida de audio (formato + voz)
-        output: {
-          format: "g711_ulaw",
-          voice: "marin",
-        },
+        // voz
+        voice: "marin",
 
+        // VAD del servidor: responde al terminar de hablar el usuario
         turn_detection: {
           type: "server_vad",
           create_response: true,
           interrupt_response: true,
         },
       },
-    }));
+    };
+
+    console.log("➡️ Sending session.update (stable)");
+    oaWs.send(JSON.stringify(sessionUpdate));
+
+    // ✅ fallback: si no llega session.updated, igual pedimos saludo en 600ms
+    setTimeout(() => {
+      if (!greeted && oaWs.readyState === WebSocket.OPEN) {
+        greeted = true;
+        console.log("➡️ Sending greeting (timeout fallback)");
+        oaWs.send(JSON.stringify({
+          type: "response.create",
+          response: {
+            instructions: "Hello, this is Domotik Solutions. How can I help you today?"
+          }
+        }));
+      }
+    }, 600);
   });
 
   oaWs.on("error", (err) => console.error("❌ OpenAI WS error:", err));
-  oaWs.on("close", (code, reason) =>
-    console.log("ℹ️ OpenAI WS closed:", code, reason?.toString?.() || "")
-  );
+
+  oaWs.on("close", (code, reason) => {
+    console.log("ℹ️ OpenAI WS closed:", code, reason?.toString?.() || "");
+  });
 
   // -------------------------
   // Twilio → OpenAI (audio)
@@ -120,7 +132,7 @@ If the caller asks for a human or it’s urgent, say you will transfer.
     }
 
     if (msg.event === "media" && msg.media?.payload) {
-      if (oaWs.readyState === WebSocket.OPEN) {
+      if (openaiReady && oaWs.readyState === WebSocket.OPEN) {
         oaWs.send(JSON.stringify({
           type: "input_audio_buffer.append",
           audio: msg.media.payload, // base64 g711_ulaw
@@ -160,17 +172,15 @@ If the caller asks for a human or it’s urgent, say you will transfer.
       return;
     }
 
-    // cuando quede aplicada la sesión, pedimos saludo 1 vez
+    // cuando confirme session.updated, pedimos saludo (si no lo hicimos ya)
     if (evt.type === "session.updated" && !greeted) {
       greeted = true;
       console.log("✅ Session updated, requesting greeting audio...");
-
       oaWs.send(JSON.stringify({
         type: "response.create",
         response: {
-          modalities: "audio",
-          instructions: "Hello, this is Domotik Solutions. How can I help you today?",
-        },
+          instructions: "Hello, this is Domotik Solutions. How can I help you today?"
+        }
       }));
       return;
     }
@@ -189,7 +199,6 @@ If the caller asks for a human or it’s urgent, say you will transfer.
       streamSid
     ) {
       console.log("🔊 audio delta bytes:", evt.delta.length);
-
       twilioWs.send(JSON.stringify({
         event: "media",
         streamSid,
@@ -205,7 +214,6 @@ If the caller asks for a human or it’s urgent, say you will transfer.
 // =========================
 app.post("/twilio/voice", (req, res) => {
   console.log("✅ Twilio hit /twilio/voice");
-
   const host = (PUBLIC_BASE_URL || req.headers.host || "").trim();
 
   res.type("text/xml");
