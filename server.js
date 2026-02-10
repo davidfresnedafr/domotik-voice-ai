@@ -14,7 +14,6 @@ wss.on("connection", (twilioWs) => {
   let streamSid = null;
   let greeted = false;
   let sessionReady = false;
-  let fullTranscript = "";
 
   const oaWs = new WebSocket("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "OpenAI-Beta": "realtime=v1" }
@@ -25,15 +24,19 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Tu nombre es Elena, asistente EXCLUSIVA de Domotik Solutions.
-        1. RECORDACIÓN DE MARCA: Tu objetivo es que el cliente recuerde el nombre "Domotik Solutions". Menciona la marca naturalmente al inicio, cuando ofrezcas una solución y al despedirte.
-        2. EXCLUSIVIDAD: No menciones otros comercios. Solo soluciones de Domotik Solutions.
-        3. ACENTO: Bogotá, Colombia (Usted). Muy profesional y humana.
-        4. CAPTURA: Si quieren comprar, diles que "En Domotik Solutions tomamos su pedido de inmediato".
-        5. CIERRE: Siempre termina con: "Gracias por confiar en Domotik Solutions, que tenga un excelente día".`,
+        instructions: `Eres Elena de Domotik Solutions. 
+        - IMPORTANTE: El cliente podría estar en ALTAVOZ. Ignora ruidos de fondo y soplidos.
+        - Sé breve y usa acento de Bogotá (Usted).
+        - No cuelgues a menos que sea una despedida definitiva.`,
         voice: "shimmer",
-        input_audio_transcription: { model: "whisper-1" },
-        turn_detection: { type: "server_vad", threshold: 0.4, silence_duration_ms: 600 }
+        input_audio_format: "g711_ulaw",
+        output_audio_format: "g711_ulaw",
+        turn_detection: { 
+          type: "server_vad", 
+          threshold: 0.7, // ⬅️ SUBIMOS a 0.7 para ignorar el soplido del micro
+          prefix_padding_ms: 300,
+          silence_duration_ms: 1000 // ⬅️ Damos más tiempo para que no corte frases
+        }
       }
     }));
   });
@@ -42,13 +45,7 @@ wss.on("connection", (twilioWs) => {
     const evt = JSON.parse(raw.toString());
     if (evt.type === "session.updated") { sessionReady = true; if (streamSid) sendGreeting(); }
 
-    if (evt.type === "conversation.item.input_audio_transcription.completed") {
-      fullTranscript += `Cliente: ${evt.transcript}\n`;
-    }
-    if (evt.type === "response.audio_transcript.done") {
-      fullTranscript += `Elena: ${evt.transcript}\n`;
-    }
-
+    // Interrupción: Solo si el sonido es FUERTE (voz real)
     if (evt.type === "input_audio_buffer.speech_started") {
       if (streamSid) twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       oaWs.send(JSON.stringify({ type: "response.cancel" }));
@@ -58,16 +55,12 @@ wss.on("connection", (twilioWs) => {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
 
+    // Colgado de seguridad: Solo con palabras muy claras
     if (evt.type === "response.done") {
       const text = evt.response?.output?.[0]?.content?.[0]?.transcript?.toLowerCase() || "";
-      // Detectamos despedida para colgar, pero dejando que Elena termine de decir "Domotik Solutions"
-      if (text.includes("bye") || text.includes("adiós") || text.includes("solutions")) {
-        // Si ella ya se está despidiendo con la marca, esperamos un poco más para que termine la frase
-        if (text.includes("domotik")) {
-          setTimeout(() => { if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close(); }, 3500);
-        } else if (text.includes("bye") || text.includes("adiós")) {
-           setTimeout(() => { if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close(); }, 2000);
-        }
+      const despedidaReal = ["chao elena", "adiós elena", "terminar llamada", "finalizar llamada"];
+      if (despedidaReal.some(word => text.includes(word))) {
+        setTimeout(() => { if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close(); }, 2000);
       }
     }
   });
@@ -79,7 +72,7 @@ wss.on("connection", (twilioWs) => {
         type: "response.create",
         response: { 
           modalities: ["audio", "text"], 
-          instructions: "Greet warmly: 'Hello! You're speaking with the assistant from Domotik Solutions. We specialize in making your home smarter... How can I help you today?'" 
+          instructions: "Greet: 'Hello! You're speaking with the assistant from Domotik Solutions. How can I help you today?'" 
         }
       }));
     }
@@ -93,16 +86,19 @@ wss.on("connection", (twilioWs) => {
     }
   });
 
-  twilioWs.on("close", () => {
-    console.log("--- RESUMEN DE LLAMADA PARA DOMOTIK SOLUTIONS ---");
-    console.log(fullTranscript || "Sin mensajes.");
-    console.log("------------------------------------------------");
-    if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
-  });
+  twilioWs.on("close", () => { if (oaWs.readyState === WebSocket.OPEN) oaWs.close(); });
 });
 
 app.post("/twilio/voice", (req, res) => {
-  res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect><Pause length="1"/></Response>`);
+  res.type("text/xml").send(`
+    <Response>
+      <Connect>
+        <Stream url="wss://${PUBLIC_BASE_URL}/media-stream">
+          <Parameter name="track" value="both_tracks" />
+        </Stream>
+      </Connect>
+      <Pause length="1"/>
+    </Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena: Especialista en Recordación de Marca`));
+server.listen(PORT, () => console.log(`🚀 Elena: Lista para Altavoz y Micro`));
