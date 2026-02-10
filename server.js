@@ -24,13 +24,16 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Your name is Elena, virtual assistant for Domotik Solutions. 
-        START ALWAYS IN ENGLISH. This is mandatory. 
-        Only switch to Spanish if the customer speaks Spanish.
-        Tone: Professional, warm, and helpful.`,
+        instructions: "Your name is Elena. Answer in English. If they speak Spanish, switch to Spanish. Be professional.",
         voice: "shimmer",
-        input_audio_transcription: { model: "whisper-1" },
-        turn_detection: { type: "server_vad", threshold: 0.4, silence_duration_ms: 800 }
+        input_audio_format: "g711_ulaw",
+        output_audio_format: "g711_ulaw",
+        turn_detection: { 
+          type: "server_vad", 
+          threshold: 0.8, // ⬅️ SUBIMOS ESTO: Ignora ruidos y soplidos, solo escucha voz clara.
+          prefix_padding_ms: 300,
+          silence_duration_ms: 1000 
+        }
       }
     }));
   });
@@ -38,6 +41,8 @@ wss.on("connection", (twilioWs) => {
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
     if (evt.type === "session.updated") { sessionReady = true; if (streamSid) tryGreet(); }
+    
+    // Si la IA envía audio, lo mandamos a Twilio
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
@@ -50,7 +55,7 @@ wss.on("connection", (twilioWs) => {
         type: "response.create",
         response: { 
           modalities: ["audio", "text"], 
-          instructions: "Greet in English: 'Thank you for calling Domotik Solutions. This is Elena, how can I help you today?'" 
+          instructions: "Greet in English: 'Hi, thanks for calling Domotik Solutions. I am Elena, how can I help you?'" 
         }
       }));
     }
@@ -71,4 +76,4 @@ app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect><Pause length="40"/></Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena Online (Sin correos por ahora)`));
+server.listen(PORT, () => console.log(`🚀 Elena estable de nuevo`));
