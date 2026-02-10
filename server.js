@@ -44,7 +44,6 @@ wss.on("connection", (twilioWs) => {
 
   let streamSid = null;
   let greeted = false;
-  let openaiReady = false;
 
   if (!OPENAI_API_KEY) {
     console.error("❌ Missing OPENAI_API_KEY in Render Environment Variables");
@@ -64,11 +63,10 @@ wss.on("connection", (twilioWs) => {
 
   oaWs.on("open", () => {
     console.log("✅ OpenAI Realtime connected");
-    openaiReady = true;
+    console.log("➡️ Sending session.update (stable)");
 
-    // ✅ Session.update “estable”: SIN modalities, SIN audio, SIN output
-    // Usamos solo campos core: voice + input_audio_format + output_audio_format + turn_detection
-    const sessionUpdate = {
+    // ✅ Session.update estable (SIN modalities, SIN output, SIN audio)
+    oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
         instructions: `
@@ -78,45 +76,23 @@ If the caller speaks Spanish, respond in Spanish.
 Be concise and professional.
         `.trim(),
 
-        // formatos soportados (Twilio Media Streams = g711_ulaw)
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
-
-        // voz
         voice: "marin",
 
-        // VAD del servidor: responde al terminar de hablar el usuario
         turn_detection: {
           type: "server_vad",
           create_response: true,
           interrupt_response: true,
         },
       },
-    };
-
-    console.log("➡️ Sending session.update (stable)");
-    oaWs.send(JSON.stringify(sessionUpdate));
-
-    // ✅ fallback: si no llega session.updated, igual pedimos saludo en 600ms
-    setTimeout(() => {
-      if (!greeted && oaWs.readyState === WebSocket.OPEN) {
-        greeted = true;
-        console.log("➡️ Sending greeting (timeout fallback)");
-        oaWs.send(JSON.stringify({
-          type: "response.create",
-          response: {
-            instructions: "Hello, this is Domotik Solutions. How can I help you today?"
-          }
-        }));
-      }
-    }, 600);
+    }));
   });
 
   oaWs.on("error", (err) => console.error("❌ OpenAI WS error:", err));
-
-  oaWs.on("close", (code, reason) => {
-    console.log("ℹ️ OpenAI WS closed:", code, reason?.toString?.() || "");
-  });
+  oaWs.on("close", (code, reason) =>
+    console.log("ℹ️ OpenAI WS closed:", code, reason?.toString?.() || "")
+  );
 
   // -------------------------
   // Twilio → OpenAI (audio)
@@ -132,10 +108,10 @@ Be concise and professional.
     }
 
     if (msg.event === "media" && msg.media?.payload) {
-      if (openaiReady && oaWs.readyState === WebSocket.OPEN) {
+      if (oaWs.readyState === WebSocket.OPEN) {
         oaWs.send(JSON.stringify({
           type: "input_audio_buffer.append",
-          audio: msg.media.payload, // base64 g711_ulaw
+          audio: msg.media.payload,
         }));
       }
       return;
@@ -153,11 +129,6 @@ Be concise and professional.
     try { oaWs.close(); } catch {}
   });
 
-  twilioWs.on("error", (err) => {
-    console.error("❌ Twilio WS error:", err);
-    try { oaWs.close(); } catch {}
-  });
-
   // -------------------------
   // OpenAI → Twilio (audio)
   // -------------------------
@@ -172,13 +143,17 @@ Be concise and professional.
       return;
     }
 
-    // cuando confirme session.updated, pedimos saludo (si no lo hicimos ya)
+    // ✅ Cuando quede aplicada la sesión, pedimos un saludo FORZANDO AUDIO
     if (evt.type === "session.updated" && !greeted) {
       greeted = true;
       console.log("✅ Session updated, requesting greeting audio...");
+
       oaWs.send(JSON.stringify({
         type: "response.create",
         response: {
+          modalities: ["audio"],
+          voice: "marin",
+          output_audio_format: "g711_ulaw",
           instructions: "Hello, this is Domotik Solutions. How can I help you today?"
         }
       }));
@@ -186,23 +161,24 @@ Be concise and professional.
     }
 
     // barge-in: si el usuario habla, corta audio en Twilio
-    if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
+    if ((evt.type === "input_audio_buffer.speech_started" || evt.type === "input_audio_buffer.speech_started") && streamSid) {
       twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       return;
     }
 
-    // audio de IA → Twilio
-    if (
-      (evt.type === "response.audio.delta" ||
-        evt.type === "response.output_audio.delta") &&
-      evt.delta &&
-      streamSid
-    ) {
-      console.log("🔊 audio delta bytes:", evt.delta.length);
+    // ✅ AUDIO DEL MODELO → TWILIO (soporta varios nombres)
+    const audioDelta =
+      (evt.type === "response.output_audio.delta" && evt.delta) ? evt.delta :
+      (evt.type === "response.audio.delta" && evt.delta) ? evt.delta :
+      (evt.type === "output_audio.delta" && evt.delta) ? evt.delta :
+      null;
+
+    if (audioDelta && streamSid) {
+      console.log("🔊 audio delta bytes:", audioDelta.length);
       twilioWs.send(JSON.stringify({
         event: "media",
         streamSid,
-        media: { payload: evt.delta }, // base64 g711_ulaw
+        media: { payload: audioDelta },
       }));
       return;
     }
