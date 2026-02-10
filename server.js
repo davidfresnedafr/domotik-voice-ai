@@ -57,39 +57,38 @@ wss.on("connection", (twilioWs) => {
   const oaWs = new WebSocket(openaiWsUrl(REALTIME_MODEL), {
     headers: {
       Authorization: `Bearer ${OPENAI_API_KEY}`,
+      // En GA suele funcionar igual con o sin esto, lo dejamos por compatibilidad
       "OpenAI-Beta": "realtime=v1",
     },
   });
 
   oaWs.on("open", () => {
     console.log("✅ OpenAI Realtime connected");
-    console.log("➡️ Sending session.update (audio config)");
+    console.log("➡️ Sending session.update (FORCE realtime + audio)");
 
-    // ✅ Schema recomendado por la guía:
-    // session.audio.input.format / session.audio.output.format
+    // ✅ ESTA ES LA CLAVE:
+    // Forzar session.type="realtime" y usar session.audio.{input,output}.format
+    // (esto es lo que habilita salida de audio)
     oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
+        type: "realtime",
+
         instructions: `
 You are the Domotik Solutions voice assistant.
 You handle CCTV, access control, networking and smart home services.
 If the caller speaks Spanish, respond in Spanish.
 Be concise and professional.
+If urgent or asks for a human, say you will transfer.
         `.trim(),
 
-        // ✅ Importante: combina text+audio (evita "Invalid modalities: ['audio']")
-        modalities: ["text", "audio"],
-
-        // ✅ Audio config (Twilio = g711_ulaw)
         audio: {
           input: { format: "g711_ulaw" },
           output: { format: "g711_ulaw" },
         },
 
-        // voz (en sesión)
         voice: "marin",
 
-        // VAD
         turn_detection: {
           type: "server_vad",
           create_response: true,
@@ -151,6 +150,7 @@ Be concise and professional.
     let evt;
     try { evt = JSON.parse(raw.toString()); } catch { return; }
 
+    // Debug mínimo (deja esto prendido por ahora)
     console.log("📩 OpenAI event:", evt.type);
 
     if (evt.type === "error") {
@@ -158,50 +158,61 @@ Be concise and professional.
       return;
     }
 
-    // ✅ Cuando confirme session.updated, pedimos saludo con audio
+    // ✅ Diagnóstico: imprime configuración efectiva de la sesión
+    if (evt.type === "session.created" || evt.type === "session.updated") {
+      try {
+        console.log("🧾 Effective session:", JSON.stringify(evt.session, null, 2));
+      } catch {}
+    }
+
+    // ✅ Saludo: solo una vez, después de session.updated
     if (evt.type === "session.updated" && !greeted) {
       greeted = true;
-      console.log("✅ Session updated, requesting greeting audio...");
+      console.log("✅ Session updated, requesting greeting...");
 
       oaWs.send(JSON.stringify({
         type: "response.create",
         response: {
-          // ✅ Igual: text+audio
-          modalities: ["text", "audio"],
-
-          // ✅ Formato de audio por respuesta (según guía)
-          audio: {
-            output: { format: "g711_ulaw" }
-          },
-
-          // (opcional) voz también aquí
-          voice: "marin",
-
           instructions: "Hello, this is Domotik Solutions. How can I help you today?"
-        },
+        }
       }));
       return;
     }
 
-    // barge-in: si el usuario habla, corta audio en Twilio
+    // Barge-in: si el usuario habla, corta audio en Twilio
     if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
       twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       return;
     }
 
-    // ✅ Audio del modelo (según guía: response.output_audio.delta o response.audio.delta)
-    const audioDelta =
-      (evt.type === "response.output_audio.delta" && evt.delta) ? evt.delta :
-      (evt.type === "response.audio.delta" && evt.delta) ? evt.delta :
-      null;
+    // ✅ ESTE ES EL EVENTO CLAVE PARA AUDIO EN GA:
+    // response.content_part.added con part.type="audio" y part.audio (base64)
+    if (evt.type === "response.content_part.added" && streamSid) {
+      const part = evt.part;
+      if (part?.type === "audio" && part.audio) {
+        console.log("🔊 audio part bytes:", part.audio.length);
 
-    if (audioDelta && streamSid) {
-      console.log("🔊 audio delta bytes:", audioDelta.length);
+        twilioWs.send(JSON.stringify({
+          event: "media",
+          streamSid,
+          media: { payload: part.audio },
+        }));
+        return;
+      }
+    }
+
+    // (por si tu cuenta/model también manda deltas)
+    if (
+      (evt.type === "response.output_audio.delta" || evt.type === "response.audio.delta") &&
+      evt.delta &&
+      streamSid
+    ) {
+      console.log("🔊 audio delta bytes:", evt.delta.length);
 
       twilioWs.send(JSON.stringify({
         event: "media",
         streamSid,
-        media: { payload: audioDelta },
+        media: { payload: evt.delta },
       }));
       return;
     }
