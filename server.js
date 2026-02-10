@@ -36,14 +36,13 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        // ✅ LÓGICA BILINGÜE: Inicia en Inglés, cambia si le hablan en Español
         instructions: `
           Your name is Elena, virtual assistant for Domotik Solutions.
           PRIMARY LANGUAGE: English. You MUST start the conversation in English.
-          Only switch to Spanish if the customer speaks Spanish first.
-          TONE: Professional and warm.
-          GOAL: Schedule technical visits for home automation. Capture name and interest.
-          If they say 'goodbye' or 'adiós', say farewell and the call will end.`,
+          Only switch to Spanish if the customer speaks Spanish or specifically asks for it.
+          TONE: Professional, warm, and helpful.
+          GOAL: Schedule technical visits for home automation. Capture the customer's name and their specific interest.
+          If they say 'goodbye' or 'adiós', say a warm farewell before the call ends.`,
         voice: "shimmer",
         input_audio_transcription: { model: "whisper-1" },
         turn_detection: { type: "server_vad", threshold: 0.4, silence_duration_ms: 800 }
@@ -82,12 +81,11 @@ wss.on("connection", (twilioWs) => {
   const tryGreet = () => {
     if (!greeted && sessionReady && streamSid) {
       greeted = true;
-      // ✅ SALUDO INICIAL FORZADO EN INGLÉS
       oaWs.send(JSON.stringify({
         type: "response.create",
         response: { 
           modalities: ["audio", "text"], 
-          instructions: "Greet clearly in English: 'Thank you for calling Domotik Solutions. This is Elena, how can I help you today?'" 
+          instructions: "Greet the customer in English: 'Thank you for calling Domotik Solutions. This is Elena, how can I help you today?'" 
         }
       }));
     }
@@ -103,16 +101,18 @@ wss.on("connection", (twilioWs) => {
 
   twilioWs.on("close", async () => {
     const duration = (Date.now() - startTime) / 1000;
+    // Solo envía correo si hubo conversación real
     if (duration > 15 && fullTranscript.length > 30) {
       const mailOptions = {
         from: MI_CORREO,
         to: MI_CORREO,
         subject: '🚀 Lead Domotik Solutions - Summary',
-        text: `Conversation:\n\n${fullTranscript}\n\nDuration: ${duration.toFixed(2)}s`
+        text: `Conversation Details:\n\n${fullTranscript}\n\nDuration: ${duration.toFixed(2)}s`
       };
       try {
         await transporter.sendMail(mailOptions);
-      } catch (e) { console.error("❌ Email error:", e); }
+        console.log("✅ Reporte enviado a df@domotiksolutions.com");
+      } catch (e) { console.error("❌ Error enviando email:", e); }
     }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
@@ -122,4 +122,4 @@ app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect><Pause length="40"/></Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena Bilingüe activa`));
+server.listen(PORT, () => console.log(`🚀 Elena activa en puerto ${PORT}`));
