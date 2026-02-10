@@ -35,18 +35,17 @@ wss.on("connection", (twilioWs) => {
   const tryGreet = () => {
     if (!greeted && streamSid && sessionReady && oaWs.readyState === WebSocket.OPEN) {
       greeted = true;
-      console.log("🚀 Canal listo. Lanzando saludo corregido...");
+      console.log("🚀 Canal listo. Lanzando saludo...");
 
       oaWs.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
 
-      // ✅ CORRECCIÓN SEGÚN LOG image_af31a5.png:
-      // Se envían modalidades ['audio', 'text'] para evitar el error de invalid_value.
+      // Enviamos el saludo con ambas modalidades para cumplir con los requisitos de la API
       oaWs.send(
         JSON.stringify({
           type: "response.create",
           response: {
             modalities: ["audio", "text"], 
-            instructions: "Greeting: 'Hello, welcome to Domotik Solutions, how can I help you today?'",
+            instructions: "Greet the user: 'Hello, welcome to Domotik Solutions, how can I help you today?'",
           },
         })
       );
@@ -67,7 +66,7 @@ wss.on("connection", (twilioWs) => {
           input_audio_transcription: { model: "whisper-1" },
           turn_detection: {
             type: "server_vad",
-            threshold: 0.2, // Mayor sensibilidad para detectar tu voz
+            threshold: 0.2, // Sensibilidad optimizada para detectar voz clara
             prefix_padding_ms: 500,
             silence_duration_ms: 500,
           },
@@ -87,12 +86,13 @@ wss.on("connection", (twilioWs) => {
       tryGreet();
     }
 
-    // LOG PARA CONFIRMAR GENERACIÓN DE RESPUESTA
+    // Este log confirma que OpenAI está enviando paquetes de audio de vuelta
     if (evt.type === "response.created") {
       console.log("🤖 OpenAI está generando audio...");
     }
 
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
+      // Reenvío de los paquetes de audio a Twilio
       twilioWs.send(
         JSON.stringify({
           event: "media",
@@ -107,7 +107,6 @@ wss.on("connection", (twilioWs) => {
     }
 
     if (evt.type === "error") {
-      // Si el error es 'insufficient_quota', revisa tu saldo en OpenAI.
       console.error("❌ ERROR DE OPENAI:", evt.error);
     }
   });
@@ -125,7 +124,7 @@ wss.on("connection", (twilioWs) => {
     }
 
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
-      process.stdout.write("."); // Confirma flujo de audio de tu voz
+      process.stdout.write("."); // Muestra flujo de entrada en tiempo real
       oaWs.send(
         JSON.stringify({
           type: "input_audio_buffer.append",
@@ -141,10 +140,10 @@ wss.on("connection", (twilioWs) => {
   });
 });
 
+// XML de Twilio simplificado para evitar interferencias de audio
 app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`
 <Response>
-  <Say language="en-US">Connecting now.</Say>
   <Connect>
     <Stream url="wss://${PUBLIC_BASE_URL}/media-stream" />
   </Connect>
@@ -152,6 +151,6 @@ app.post("/twilio/voice", (req, res) => {
 </Response>`);
 });
 
-app.get("/", (req, res) => res.send("OK"));
+app.get("/", (req, res) => res.send("Servidor Domotik en Línea"));
 
-server.listen(PORT, () => console.log(`🚀 Sistema en puerto ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Sistema activo en puerto ${PORT}`));
