@@ -22,11 +22,12 @@ wss.on("connection", (twilioWs) => {
     });
 
     oaWs.on("open", () => {
+        // Configuración mínima y robusta
         oaWs.send(JSON.stringify({
             type: "session.update",
             session: {
                 modalities: ["text", "audio"],
-                instructions: "You are the Domotik Solutions assistant. Main language: English. Respond in Spanish if spoken to in Spanish. Be concise. Start with: 'Hello, welcome to Domotik Solutions, how can I help you today?'",
+                instructions: "You are a bilingual assistant. English is primary. If the user speaks Spanish, answer in Spanish. Say exactly this right now: 'Hello, welcome to Domotik Solutions, how can I help you today?'",
                 voice: "alloy",
                 input_audio_format: "g711_ulaw",
                 output_audio_format: "g711_ulaw",
@@ -38,13 +39,14 @@ wss.on("connection", (twilioWs) => {
     oaWs.on("message", (raw) => {
         const evt = JSON.parse(raw.toString());
 
-        // Lanzar saludo apenas OpenAI esté listo Y tengamos el ID de Twilio
+        // Disparar saludo solo cuando Twilio nos de el ID
         if (evt.type === "session.updated" && !greeted && streamSid) {
             greeted = true;
-            console.log("🚀 Lanzando saludo al stream:", streamSid);
+            console.log("🚀 Lanzando saludo final al stream:", streamSid);
             oaWs.send(JSON.stringify({ type: "response.create" }));
         }
 
+        // Reenvío de audio sin procesar nada
         if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
             twilioWs.send(JSON.stringify({
                 event: "media",
@@ -59,16 +61,9 @@ wss.on("connection", (twilioWs) => {
         
         if (msg.event === "start") {
             streamSid = msg.start.streamSid;
-            console.log("📞 Stream Activo:", streamSid);
+            console.log("📞 Twilio Conectado - ID:", streamSid);
             
-            // INYECCIÓN DE SILENCIO PARA EVITAR ERROR 31921
-            // Enviamos un pequeño paquete de audio vacío para mantener la conexión
-            twilioWs.send(JSON.stringify({
-                event: "media",
-                streamSid,
-                media: { payload: "f/8f/8f/8f/8" } 
-            }));
-
+            // Si OpenAI ya abrió, saludamos ahora que tenemos el ID
             if (oaWs.readyState === WebSocket.OPEN && !greeted) {
                 greeted = true;
                 oaWs.send(JSON.stringify({ type: "response.create" }));
@@ -86,13 +81,16 @@ wss.on("connection", (twilioWs) => {
     twilioWs.on("close", () => { if (oaWs.readyState === WebSocket.OPEN) oaWs.close(); });
 });
 
+// XML de Twilio modificado para ser más persistente
 app.post("/twilio/voice", (req, res) => {
     res.type("text/xml").send(`
         <Response>
-            <Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect>
-            <Say language="en-US">Connecting to Domotik.</Say>
+            <Say language="en-US">Connecting.</Say>
+            <Connect>
+                <Stream url="wss://${PUBLIC_BASE_URL}/media-stream" />
+            </Connect>
             <Pause length="30"/>
         </Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Puerto ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Demo Lista`));
