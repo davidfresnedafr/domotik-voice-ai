@@ -7,11 +7,8 @@ import WebSocket, { WebSocketServer } from "ws";
 // =========================
 const PORT = process.env.PORT || 3000;
 
-// Render env
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").trim();
-
-// OpenAI env
-const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim(); // ✅ evita espacios/saltos
+const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const REALTIME_MODEL = (process.env.REALTIME_MODEL || "gpt-realtime").trim();
 
 // =========================
@@ -20,13 +17,11 @@ const REALTIME_MODEL = (process.env.REALTIME_MODEL || "gpt-realtime").trim();
 const app = express();
 app.use(express.urlencoded({ extended: false }));
 
-// Log de requests
 app.use((req, _res, next) => {
   console.log(`➡️ ${req.method} ${req.path}`);
   next();
 });
 
-// Health checks
 app.get("/", (_req, res) => res.status(200).send("OK"));
 app.get("/healthz", (_req, res) => res.status(200).send("OK"));
 
@@ -48,6 +43,7 @@ wss.on("connection", (twilioWs) => {
   console.log("✅ Twilio connected to /media-stream");
 
   let streamSid = null;
+  let greeted = false;
 
   if (!OPENAI_API_KEY) {
     console.error("❌ Missing OPENAI_API_KEY in Render Environment Variables");
@@ -55,9 +51,6 @@ wss.on("connection", (twilioWs) => {
     return;
   }
 
-  // -------------------------
-  // OpenAI Realtime WS
-  // -------------------------
   const oaWs = new WebSocket(openaiWsUrl(REALTIME_MODEL), {
     headers: {
       Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -67,9 +60,11 @@ wss.on("connection", (twilioWs) => {
 
   oaWs.on("open", () => {
     console.log("✅ OpenAI Realtime connected");
+    console.log("➡️ Sending session.update");
 
-    // ✅ Enviamos session.update y ESPERAMOS session.updated para pedir el saludo
-    const sessionUpdate = {
+    // ✅ Campos correctos según docs actuales:
+    // modalities + input_audio_format + output_audio_format + voice
+    oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
         instructions: `
@@ -80,47 +75,33 @@ Be concise and professional.
 If the caller asks for a human or it’s urgent, say you will transfer.
         `.trim(),
 
-        // ✅ Fuerza audio en salida
-        output_modalities: ["audio"],
+        modalities: ["audio"],
 
-        // ✅ Twilio Media Streams usa G.711 u-law (PCMU)
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
 
-        // voz
         voice: "marin",
 
-        // VAD
         turn_detection: {
           type: "server_vad",
           create_response: true,
           interrupt_response: true,
         },
       },
-    };
-
-    console.log("➡️ Sending session.update");
-    oaWs.send(JSON.stringify(sessionUpdate));
+    }));
   });
 
-  oaWs.on("error", (err) => {
-    console.error("❌ OpenAI WS error:", err);
-  });
-
-  oaWs.on("close", (code, reason) => {
-    console.log("ℹ️ OpenAI WS closed:", code, reason?.toString?.() || "");
-  });
+  oaWs.on("error", (err) => console.error("❌ OpenAI WS error:", err));
+  oaWs.on("close", (code, reason) =>
+    console.log("ℹ️ OpenAI WS closed:", code, reason?.toString?.() || "")
+  );
 
   // -------------------------
   // Twilio → OpenAI (audio)
   // -------------------------
   twilioWs.on("message", (raw) => {
     let msg;
-    try {
-      msg = JSON.parse(raw.toString());
-    } catch {
-      return;
-    }
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
 
     if (msg.event === "start") {
       streamSid = msg.start?.streamSid || null;
@@ -132,7 +113,7 @@ If the caller asks for a human or it’s urgent, say you will transfer.
       if (oaWs.readyState === WebSocket.OPEN) {
         oaWs.send(JSON.stringify({
           type: "input_audio_buffer.append",
-          audio: msg.media.payload, // base64 g711_ulaw
+          audio: msg.media.payload,
         }));
       }
       return;
@@ -141,7 +122,6 @@ If the caller asks for a human or it’s urgent, say you will transfer.
     if (msg.event === "stop") {
       console.log("🛑 Stream stopped");
       try { oaWs.close(); } catch {}
-      return;
     }
   });
 
@@ -160,42 +140,37 @@ If the caller asks for a human or it’s urgent, say you will transfer.
   // -------------------------
   oaWs.on("message", (raw) => {
     let evt;
-    try {
-      evt = JSON.parse(raw.toString());
-    } catch {
-      return;
-    }
+    try { evt = JSON.parse(raw.toString()); } catch { return; }
 
-    // ✅ DEBUG: ver qué eventos llegan de OpenAI
     console.log("📩 OpenAI event:", evt.type);
 
-    // Si hay error del API, verlo
     if (evt.type === "error") {
       console.error("❌ OpenAI event error:", evt.error);
       return;
     }
 
-    // ✅ Cuando OpenAI confirma sesión aplicada, pedimos saludo con audio
-    if (evt.type === "session.updated") {
+    // Cuando la sesión se actualiza, pedimos el saludo (solo 1 vez)
+    if (evt.type === "session.updated" && !greeted) {
+      greeted = true;
       console.log("✅ Session updated, requesting greeting audio...");
 
       oaWs.send(JSON.stringify({
         type: "response.create",
         response: {
-          output_modalities: ["audio"],
+          modalities: ["audio"],
           instructions: "Hello, this is Domotik Solutions. How can I help you today?"
         },
       }));
       return;
     }
 
-    // Interrupción (barge-in)
+    // Barge-in: si el usuario habla, limpiamos audio en Twilio
     if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
       twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       return;
     }
 
-    // Audio de la IA hacia la llamada
+    // Audio de IA → Twilio
     if (
       (evt.type === "response.audio.delta" ||
         evt.type === "response.output_audio.delta") &&
@@ -207,9 +182,8 @@ If the caller asks for a human or it’s urgent, say you will transfer.
       twilioWs.send(JSON.stringify({
         event: "media",
         streamSid,
-        media: { payload: evt.delta }, // base64 g711_ulaw
+        media: { payload: evt.delta },
       }));
-      return;
     }
   });
 });
