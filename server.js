@@ -2,7 +2,6 @@ import express from "express";
 import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
 
-// Configuración con limpieza de caracteres invisibles
 const PORT = process.env.PORT || 3000;
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const REALTIME_MODEL = "gpt-4o-realtime-preview"; 
@@ -12,7 +11,14 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/media-stream" });
 
-// --- UTILIDADES DE AUDIO (PCM 24kHz -> uLaw 8kHz) ---
+// --- AUTO-PING PARA RENDER ---
+setInterval(() => {
+    fetch(`https://${PUBLIC_BASE_URL}/twilio/voice`, { method: 'POST' })
+        .then(() => console.log("⚓ Ping de mantenimiento enviado"))
+        .catch(() => {});
+}, 600000); // 10 minutos
+
+// --- CONVERSIÓN DE AUDIO ---
 function linearToMuLawSample(sample) {
     const MU_LAW_MAX = 0x1FFF; const BIAS = 0x84;
     let sign = (sample >> 8) & 0x80; if (sign) sample = -sample;
@@ -43,12 +49,11 @@ async function ttsToUlawChunks(text) {
         const chunks = [];
         for (let i = 0; i < ulawRaw.length; i += 160) { chunks.push(ulawRaw.subarray(i, i + 160).toString("base64")); }
         return chunks;
-    } catch (e) { console.error("Error TTS:", e); return []; }
+    } catch (e) { return []; }
 }
 
-// --- LÓGICA DE CONEXIÓN ---
+// --- LÓGICA WEBSOCKET ---
 wss.on("connection", (twilioWs) => {
-    console.log("✅ Twilio conectado");
     let streamSid = null;
     let greeted = false;
     let speaking = false;
@@ -59,14 +64,11 @@ wss.on("connection", (twilioWs) => {
     });
 
     oaWs.on("open", () => {
-        console.log("✅ OpenAI conectado");
         oaWs.send(JSON.stringify({
             type: "session.update",
             session: {
                 modalities: ["text"],
                 instructions: "Eres el asistente de Domotik Solutions. Habla español y sé muy breve.",
-                input_audio_format: "g711_ulaw",
-                output_audio_format: "g711_ulaw",
                 turn_detection: { type: "server_vad" }
             }
         }));
@@ -82,30 +84,29 @@ wss.on("connection", (twilioWs) => {
 
     oaWs.on("message", async (raw) => {
         const evt = JSON.parse(raw.toString());
-        if (evt.type === "response.text.delta") textBuffer += evt.delta;
-
-        // Saludo inicial al detectar que la sesión está lista
-        if (evt.type === "session.updated" && !greeted) {
+        
+        // CORRECCIÓN: Esperar a 'session.created' o 'session.updated' antes de enviar el saludo
+        if ((evt.type === "session.created" || evt.type === "session.updated") && !greeted) {
             greeted = true;
-            console.log("🗣️ Enviando saludo inicial...");
-            oaWs.send(JSON.stringify({
-                type: "conversation.item.create",
-                item: { type: "message", role: "assistant", content: [{ type: "text", text: "Hola, bienvenido a Domotik Solutions. ¿En qué puedo ayudarte?" }] }
-            }));
-            oaWs.send(JSON.stringify({ type: "response.create" }));
+            console.log("🗣️ Sesión lista. Enviando saludo...");
+            setTimeout(() => {
+                oaWs.send(JSON.stringify({
+                    type: "conversation.item.create",
+                    item: { type: "message", role: "assistant", content: [{ type: "text", text: "Hola, bienvenido a Domotik Solutions. ¿Cómo puedo ayudarte?" }] }
+                }));
+                oaWs.send(JSON.stringify({ type: "response.create" }));
+            }, 500); // Pequeño delay para asegurar que el canal esté abierto
         }
 
-        // Al terminar de generar texto, convertir a audio y enviar a Twilio
+        if (evt.type === "response.text.delta") textBuffer += evt.delta;
+
         if (evt.type === "response.done") {
             const content = textBuffer.trim(); textBuffer = "";
             if (content) {
                 console.log("🔊 Reproduciendo:", content);
                 speaking = true;
                 const chunks = await ttsToUlawChunks(content);
-                
-                // Limpiar buffer de Twilio antes de hablar
                 twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
-
                 let i = 0;
                 const timer = setInterval(() => {
                     if (i >= chunks.length || twilioWs.readyState !== WebSocket.OPEN) {
@@ -119,7 +120,6 @@ wss.on("connection", (twilioWs) => {
         }
     });
 
-    oaWs.on("error", (e) => console.error("❌ OpenAI Error:", e.message));
     twilioWs.on("close", () => { if (oaWs.readyState === WebSocket.OPEN) oaWs.close(); });
 });
 
@@ -127,4 +127,4 @@ app.post("/twilio/voice", (req, res) => {
     res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect></Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Servidor listo en puerto ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Online en puerto ${PORT}`));
