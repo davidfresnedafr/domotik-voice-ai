@@ -10,75 +10,69 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/media-stream" });
 
-// Mantener despierto el servidor
-setInterval(() => {
-    fetch(`https://${PUBLIC_BASE_URL}/twilio/voice`, { method: 'POST' }).catch(() => {});
-}, 300000);
+// Auto-ping constante
+setInterval(() => { fetch(`https://${PUBLIC_BASE_URL}/twilio/voice`, { method: 'POST' }).catch(() => {}); }, 300000);
 
 wss.on("connection", (twilioWs) => {
     let streamSid = null;
     let greeted = false;
 
     const oaWs = new WebSocket(`wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview`, {
-        headers: { 
-            "Authorization": `Bearer ${OPENAI_API_KEY}`,
-            "OpenAI-Beta": "realtime=v1" 
-        }
+        headers: { "Authorization": `Bearer ${OPENAI_API_KEY}`, "OpenAI-Beta": "realtime=v1" }
     });
 
     oaWs.on("open", () => {
+        console.log("✅ Conectado a OpenAI. Configurando...");
+        // Configuración de sesión
         oaWs.send(JSON.stringify({
             type: "session.update",
             session: {
-                modalities: ["text", "audio"], 
-                // NUEVAS INSTRUCCIONES BILINGÜES
-                instructions: "You are the Domotik Solutions assistant. Your main language is English, but you are perfectly bilingual. If the user speaks Spanish, respond in Spanish. If they speak English, respond in English. Be concise and friendly. Start by saying: 'Hello, welcome to Domotik Solutions, how can I help you today?'",
+                modalities: ["text", "audio"],
+                instructions: "Your main language is English. If the user speaks Spanish, respond in Spanish. Be concise. Start immediately with: 'Hello, welcome to Domotik Solutions, how can I help you?'",
                 voice: "alloy",
                 input_audio_format: "g711_ulaw",
                 output_audio_format: "g711_ulaw",
-                turn_detection: { 
-                    type: "server_vad",
-                    threshold: 0.5, // Ajuste para detectar mejor la voz humana
-                    prefix_padding_ms: 300,
-                    silence_duration_ms: 500 
-                }
+                turn_detection: { type: "server_vad", threshold: 0.5 }
             }
         }));
+
+        // FORZAR SALUDO: Lo enviamos 1 segundo después de abrir, sin esperar a 'session.updated'
+        setTimeout(() => {
+            if (!greeted) {
+                greeted = true;
+                console.log("🚀 Disparando Saludo Forzado...");
+                oaWs.send(JSON.stringify({ type: "response.create" }));
+            }
+        }, 1500);
     });
 
     oaWs.on("message", (raw) => {
         const evt = JSON.parse(raw.toString());
 
-        if (evt.type === "session.updated" && !greeted) {
-            greeted = true;
-            setTimeout(() => {
-                oaWs.send(JSON.stringify({ type: "response.create" }));
-            }, 1000); 
-        }
-
+        // Si OpenAI envía audio, va directo a Twilio
         if (evt.type === "response.audio.delta" && evt.delta) {
-            twilioWs.send(JSON.stringify({
-                event: "media",
-                streamSid,
-                media: { payload: evt.delta }
-            }));
+            twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
         }
 
-        // Log para ver qué entiende la IA (ayuda a debuguear si no responde)
+        // Log de lo que el usuario dice para debug
         if (evt.type === "conversation.item.input_audio_transcription.completed") {
-            console.log("User said:", evt.transcript);
+            console.log("🎙️ Usuario:", evt.transcript);
         }
     });
 
     twilioWs.on("message", (raw) => {
         const msg = JSON.parse(raw.toString());
-        if (msg.event === "start") streamSid = msg.start.streamSid;
+        if (msg.event === "start") {
+            streamSid = msg.start.streamSid;
+            console.log("📞 Stream activo:", streamSid);
+        }
         if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
             oaWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: msg.media.payload }));
         }
     });
 
     twilioWs.on("close", () => { if (oaWs.readyState === WebSocket.OPEN) oaWs.close(); });
+    oaWs.on("error", (e) => console.error("❌ Error OpenAI:", e.message));
 });
 
 app.post("/twilio/voice", (req, res) => {
@@ -89,4 +83,4 @@ app.post("/twilio/voice", (req, res) => {
         </Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Bilingüe listo en puerto ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Listo en puerto ${PORT}`));
