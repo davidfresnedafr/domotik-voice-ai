@@ -2,25 +2,24 @@ import express from "express";
 import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
 
-const PORT = process.env.PORT || 10000; // Ajustado al puerto que muestra tu log
+const PORT = process.env.PORT || 10000;
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const PUBLIC_BASE_URL = "domotik-voice-ai.onrender.com";
-const REALTIME_MODEL = "gpt-4o-realtime-preview";
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/media-stream" });
 
-// Auto-ping para mantener vivo el proceso
+// Mantener el servidor despierto
 setInterval(() => {
     fetch(`https://${PUBLIC_BASE_URL}/twilio/voice`, { method: 'POST' }).catch(() => {});
-}, 300000); // Cada 5 minutos para mayor seguridad
+}, 300000);
 
 wss.on("connection", (twilioWs) => {
     let streamSid = null;
     let greeted = false;
 
-    const oaWs = new WebSocket(`wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`, {
+    const oaWs = new WebSocket(`wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview`, {
         headers: { 
             "Authorization": `Bearer ${OPENAI_API_KEY}`,
             "OpenAI-Beta": "realtime=v1" 
@@ -32,7 +31,7 @@ wss.on("connection", (twilioWs) => {
             type: "session.update",
             session: {
                 modalities: ["text", "audio"], 
-                instructions: "Responde de inmediato: 'Hola, bienvenido a Domotik Solutions, ¿en qué puedo ayudarte?'. Sé muy breve.",
+                instructions: "Saluda inmediatamente diciendo: 'Hola, bienvenido a Domotik Solutions, ¿en qué puedo ayudarte?'. Sé muy breve.",
                 voice: "alloy",
                 input_audio_format: "g711_ulaw",
                 output_audio_format: "g711_ulaw",
@@ -44,14 +43,16 @@ wss.on("connection", (twilioWs) => {
     oaWs.on("message", (raw) => {
         const evt = JSON.parse(raw.toString());
 
-        // Disparar saludo apenas la sesión confirme la actualización
+        // SALUDO CON RETRASO DE SEGURIDAD
         if (evt.type === "session.updated" && !greeted) {
             greeted = true;
-            console.log("🗣️ Sesión lista. Disparando saludo inicial...");
-            oaWs.send(JSON.stringify({ type: "response.create" }));
+            console.log("🗣️ Canal listo. Esperando estabilidad...");
+            setTimeout(() => {
+                console.log("🚀 Lanzando saludo ahora!");
+                oaWs.send(JSON.stringify({ type: "response.create" }));
+            }, 1500); // 1.5 segundos de espera para que Twilio enganche el audio
         }
 
-        // Mover audio de OpenAI a Twilio sin procesar (Directo)
         if (evt.type === "response.audio.delta" && evt.delta) {
             twilioWs.send(JSON.stringify({
                 event: "media",
@@ -63,16 +64,9 @@ wss.on("connection", (twilioWs) => {
 
     twilioWs.on("message", (raw) => {
         const msg = JSON.parse(raw.toString());
-        if (msg.event === "start") {
-            streamSid = msg.start.streamSid;
-            console.log("🚀 Stream activo:", streamSid);
-        }
-        // Mover audio de Twilio a OpenAI (Directo)
+        if (msg.event === "start") streamSid = msg.start.streamSid;
         if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
-            oaWs.send(JSON.stringify({
-                type: "input_audio_buffer.append",
-                audio: msg.media.payload
-            }));
+            oaWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: msg.media.payload }));
         }
     });
 
@@ -82,9 +76,10 @@ wss.on("connection", (twilioWs) => {
 app.post("/twilio/voice", (req, res) => {
     res.type("text/xml").send(`
         <Response>
+            <Say language="es-MX">Conectando con Domotik.</Say>
             <Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect>
-            <Pause length="40"/>
+            <Pause length="30"/>
         </Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Sistema operativo en puerto ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Puerto ${PORT}`));
