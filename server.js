@@ -14,6 +14,7 @@ wss.on("connection", (twilioWs) => {
   let streamSid = null;
   let greeted = false;
   let sessionReady = false;
+  let fullTranscript = "";
 
   const oaWs = new WebSocket("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "OpenAI-Beta": "realtime=v1" }
@@ -24,27 +25,20 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Tu nombre es Elena, asistente ejecutiva de Domotik Solutions. 
-        
-        UBICACIÓN ESTRATÉGICA:
-        - Operamos EXCLUSIVAMENTE en South Florida (Miami, Fort Lauderdale, Palm Beach, y alrededores).
-        - Si mencionan Colombia u otros países, aclara que aunque tu acento es de Bogotá, la empresa es 100% local de Florida.
-        
-        PERFIL HIGH-END:
-        - Ofrece soluciones integrales de lujo: iluminación inteligente, cine en casa de alta gama y seguridad avanzada.
-        - Tu lenguaje debe ser sofisticado. No hables de "barato", habla de "inversión en confort" y "sistemas de alto desempeño".
-
-        LOGICA DE INTERRUPCIÓN Y CIERRE:
-        - Si el cliente habla, CÁLLATE de inmediato.
-        - Si detectas una despedida (bye, adiós, chao, hasta luego, gracias), confirma la despedida y la llamada se cortará automáticamente.`,
+        instructions: `Eres Elena, asistente ejecutiva de Domotik Solutions. 
+        - MERCADO: High-End en South Florida (Miami, Fort Lauderdale, Palm Beach). No operamos en otros países.
+        - ACENTO: Bogotá, Colombia (Usted). Muy elegante.
+        - ALTAVOZ: El cliente usa altavoz; ignora soplidos y ruidos de fondo.
+        - REGLA DE CIERRE: Solo cuelga si el cliente se despide claramente (bye, adiós, chao, gracias).`,
         voice: "shimmer",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
+        input_audio_transcription: { model: "whisper-1" },
         turn_detection: { 
           type: "server_vad", 
-          threshold: 0.7, // Umbral alto para ignorar soplidos del micro
+          threshold: 0.8, // ⬅️ Umbral muy alto para eliminar el "soplido" del micro
           prefix_padding_ms: 300,
-          silence_duration_ms: 800 
+          silence_duration_ms: 1000 
         }
       }
     }));
@@ -54,30 +48,28 @@ wss.on("connection", (twilioWs) => {
     const evt = JSON.parse(raw.toString());
     if (evt.type === "session.updated") { sessionReady = true; if (streamSid) sendGreeting(); }
 
-    // Interrupción activa
+    if (evt.type === "conversation.item.input_audio_transcription.completed") {
+      fullTranscript += `Cliente: ${evt.transcript}\n`;
+    }
+    if (evt.type === "response.audio_transcript.done") {
+      fullTranscript += `Elena: ${evt.transcript}\n`;
+    }
+
     if (evt.type === "input_audio_buffer.speech_started") {
       if (streamSid) twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       oaWs.send(JSON.stringify({ type: "response.cancel" }));
     }
 
-    // Lógica de COLGADO REFORZADA
-    if (evt.type === "response.done") {
-      const text = evt.response?.output?.[0]?.content?.[0]?.transcript?.toLowerCase() || "";
-      const despedidas = ["bye", "goodbye", "adiós", "chao", "hasta luego", "que tenga un buen día", "nos vemos"];
-      
-      if (despedidas.some(palabra => text.includes(palabra))) {
-        console.log("Cierre de llamada detectado...");
-        setTimeout(() => { 
-          if (twilioWs.readyState === WebSocket.OPEN) {
-            twilioWs.send(JSON.stringify({ event: "clear", streamSid })); // Limpia audio pendiente
-            twilioWs.close(); 
-          }
-        }, 2000); // 2 segundos para que termine de decir "Gracias por llamar a Domotik Solutions"
-      }
-    }
-
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
+    }
+
+    if (evt.type === "response.done") {
+      const text = evt.response?.output?.[0]?.content?.[0]?.transcript?.toLowerCase() || "";
+      const despedidas = ["bye", "adiós", "chao", "luego", "gracias", "thanks"];
+      if (despedidas.some(d => text.includes(d))) {
+        setTimeout(() => { if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close(); }, 2500);
+      }
     }
   });
 
@@ -88,7 +80,7 @@ wss.on("connection", (twilioWs) => {
         type: "response.create",
         response: { 
           modalities: ["audio", "text"], 
-          instructions: "Greeting: 'Hello! You are speaking with Elena from Domotik Solutions, providing premium automation here in South Florida. How may I assist you with your project today?'" 
+          instructions: "Greet: 'Hello! You're speaking with Elena from Domotik Solutions. We specialize in premium automation projects here in South Florida. How may I assist you today?'" 
         }
       }));
     }
@@ -102,11 +94,15 @@ wss.on("connection", (twilioWs) => {
     }
   });
 
-  twilioWs.on("close", () => { if (oaWs.readyState === WebSocket.OPEN) oaWs.close(); });
+  twilioWs.on("close", () => {
+    console.log("--- RESUMEN DOMOTIK ---");
+    console.log(fullTranscript || "No se capturó conversación.");
+    if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
+  });
 });
 
 app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect><Pause length="1"/></Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena High-
+server.listen(PORT, () => console.log(`🚀 Elena High-End Florida Lista`));
