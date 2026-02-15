@@ -24,36 +24,35 @@ wss.on("connection", (twilioWs) => {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "OpenAI-Beta": "realtime=v1" }
   });
 
-  // Solo saludamos si el WebSocket de OpenAI está en estado OPEN (1)
   const sendGreeting = () => {
     if (!greeted && streamSid && oaWs.readyState === WebSocket.OPEN) {
       greeted = true;
-      console.log("🚀 Enviando saludo oficial en Inglés...");
       oaWs.send(JSON.stringify({
         type: "response.create",
         response: { 
           modalities: ["audio", "text"], 
-          instructions: "Greeting: 'Thank you for calling Domotik Solutions. This is Elena. How can I assist you with your project today?'" 
+          instructions: "SAY THIS EXACTLY IN ENGLISH: 'Thank you for calling Domotik Solutions. This is Elena. How can I assist you with your project today?' Do not translate this to Spanish yet." 
         }
       }));
     }
   };
 
   oaWs.on("open", () => {
-    console.log("✅ Conectado a OpenAI");
     oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: "Your name is Elena from Domotik Solutions. PRIMARY LANGUAGE: ENGLISH. Only speak Spanish if the client does. You are a high-end concierge.",
+        instructions: `Your name is Elena, a high-end assistant for Domotik Solutions. 
+        - STRICT RULE: You must speak ENGLISH. Only switch to Spanish if the user speaks a full sentence in Spanish. 
+        - DO NOT respond to background noise or short mumbles.
+        - If you hear noise, stay silent.`,
         voice: "alloy",
-        input_audio_format: "g711_ulaw",
-        output_audio_format: "g711_ulaw",
+        input_audio_transcription: { model: "whisper-1" },
         turn_detection: { 
           type: "server_vad", 
-          threshold: 0.8, // Bajamos un poco para evitar que se 'corte' el audio
-          prefix_padding_ms: 500,
-          silence_duration_ms: 1200 
+          threshold: 0.6, // ⬅️ Bajamos a 0.6 para que SÍ te escuche
+          prefix_padding_ms: 600,
+          silence_duration_ms: 1500 // ⬅️ Espera más para no interrumpirte
         }
       }
     }));
@@ -62,9 +61,8 @@ wss.on("connection", (twilioWs) => {
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
 
-    // SALUDO: Solo cuando la sesión está lista y el socket abierto
-    if (evt.type === "session.updated") {
-      setTimeout(sendGreeting, 2000); 
+    if (evt.type === "session.updated" && streamSid) {
+      setTimeout(sendGreeting, 2500); 
     }
 
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
@@ -72,7 +70,12 @@ wss.on("connection", (twilioWs) => {
     }
 
     if (evt.type === "response.audio_transcript.done") { fullTranscript += `Elena: ${evt.transcript}\n`; }
-    if (evt.type === "conversation.item.input_audio_transcription.completed") { fullTranscript += `Cliente: ${evt.transcript}\n`; }
+    if (evt.type === "conversation.item.input_audio_transcription.completed") { 
+        // Solo guardamos si hay contenido real
+        if (evt.transcript.trim().length > 2) {
+            fullTranscript += `Cliente: ${evt.transcript}\n`;
+        }
+    }
   });
 
   twilioWs.on("message", (raw) => {
@@ -84,23 +87,20 @@ wss.on("connection", (twilioWs) => {
   });
 
   twilioWs.on("close", async () => {
-    if (fullTranscript.length > 10) {
+    if (fullTranscript.length > 15) {
         try {
             await client.messages.create({
-                body: `🏠 *Nuevo Reporte Domotik*\n\n${fullTranscript}`,
+                body: `🏠 *Domotik Lead Report*\n\n${fullTranscript}`,
                 from: TWILIO_WHATSAPP, to: MI_WHATSAPP
             });
-        } catch (e) { console.error("Error WhatsApp:", e.message); }
+        } catch (e) { console.error("WhatsApp Error:", e.message); }
     }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
 });
 
 app.post("/twilio/voice", (req, res) => {
-  res.type("text/xml").send(`
-    <Response>
-      <Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect>
-    </Response>`);
+  res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect></Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena v6.5 Online`));
+server.listen(PORT, () => console.log(`🚀 Elena v7.0 Ready`));
