@@ -17,60 +17,36 @@ const wss = new WebSocketServer({ server, path: "/media-stream" });
 
 wss.on("connection", (twilioWs) => {
   let streamSid = null;
-  let greeted = false;
-  let fullTranscript = ""; 
+  let fullTranscript = []; 
 
   const oaWs = new WebSocket("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "OpenAI-Beta": "realtime=v1" }
   });
-
-  const sendGreeting = () => {
-    if (!greeted && streamSid && oaWs.readyState === WebSocket.OPEN) {
-      greeted = true;
-      oaWs.send(JSON.stringify({
-        type: "response.create",
-        response: { 
-          modalities: ["audio", "text"], 
-          instructions: "Short Greeting: 'Domotik Solutions, Elena speaking. How can I help?'" 
-        }
-      }));
-    }
-  };
 
   oaWs.on("open", () => {
     oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `You are Elena. BE EXTREMELY BRIEF.
-        1. Ask for the service needed.
-        2. Ask for the address.
-        3. Ask for the date and time.
-        STOP TALKING immediately if the user speaks. Do not use filler phrases like 'I understand' or 'Sure'.`,
+        instructions: `Your name is Elena from Domotik Solutions. 
+        - YOU ARE A SCHEDULER. 
+        - MANDATORY DATA TO COLLECT: 1. Customer Name, 2. Full Address, 3. Problem/Service, 4. Time for tomorrow.
+        - BE CONCISE: Ask one thing at a time. 
+        - INTERRUPT: If the customer speaks, stop immediately.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
-        turn_detection: { 
-          type: "server_vad", 
-          threshold: 0.4, // Más sensible para detectar interrupciones rápido
-          prefix_padding_ms: 100,
-          silence_duration_ms: 600 // Reacción casi instantánea
-        }
+        turn_detection: { type: "server_vad", threshold: 0.4, silence_duration_ms: 800 }
       }
     }));
   });
 
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
-
-    // INTERRUPCIÓN CRÍTICA (BARGE-IN)
-    if (evt.type === "input_audio_buffer.speech_started") {
-      console.log("🤫 Cliente hablando: Callando a Elena...");
-      if (streamSid) {
-        // Detiene el audio en Twilio inmediatamente
-        twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
-      }
-      // Detiene la generación en OpenAI
+    
+    // CORTE DE AUDIO SI EL CLIENTE HABLA
+    if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
+      twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       oaWs.send(JSON.stringify({ type: "response.cancel" }));
     }
 
@@ -78,12 +54,10 @@ wss.on("connection", (twilioWs) => {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
 
-    if (evt.type === "response.audio_transcript.done") { fullTranscript += `E: ${evt.transcript}\n`; }
+    if (evt.type === "response.audio_transcript.done") { fullTranscript.push(`Elena: ${evt.transcript}`); }
     if (evt.type === "conversation.item.input_audio_transcription.completed") { 
-      if (evt.transcript.trim().length > 2) fullTranscript += `C: ${evt.transcript}\n`; 
+      fullTranscript.push(`Cliente: ${evt.transcript}`); 
     }
-    
-    if (evt.type === "session.updated") { setTimeout(sendGreeting, 1200); }
   });
 
   twilioWs.on("message", (raw) => {
@@ -95,34 +69,26 @@ wss.on("connection", (twilioWs) => {
   });
 
   twilioWs.on("close", async () => {
-    if (fullTranscript.length > 5) {
-      // FILTRO DE DATOS: Solo enviamos lo importante para evitar saturación de WhatsApp
-      const lines = fullTranscript.split('\n');
-      const filteredInfo = lines.filter(l => 
-        /\d/.test(l) || l.toLowerCase().includes("street") || 
-        l.toLowerCase().includes("ave") || l.toLowerCase().includes("appointment")
-      ).join('\n');
-
+    if (fullTranscript.length > 2) {
+      // Formateamos el mensaje como una orden de trabajo para los técnicos
+      const report = fullTranscript.join('\n');
       try {
         await client.messages.create({
-          body: `🏠 *DOMOTIK DATA*\n\n${filteredInfo || "Ver chat completo: \n" + fullTranscript.slice(-400)}`,
+          body: `🛠️ *ORDEN DE VISITA TÉCNICA - DOMOTIK*\n\nRESUMEN:\n${report.slice(-800)}`,
           from: TWILIO_WHATSAPP, to: MI_WHATSAPP
         });
-      } catch (e) { console.error("Error SMS:", e.message); }
+      } catch (e) { console.error("Error WhatsApp:", e.message); }
     }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
 });
 
+// CAMBIO CRÍTICO: Twilio da el saludo inicial para que NUNCA falle
 app.post("/twilio/voice", (req, res) => {
-  res.type("text/xml").send(`
-    <Response>
-      <Connect>
-        <Stream url="wss://${PUBLIC_BASE_URL}/media-stream">
-          <Parameter name="inboundTracks" value="both_tracks" />
-        </Stream>
-      </Connect>
-    </Response>`);
+  const twiml = new twilio.twiml.VoiceResponse();
+  twiml.say({ voice: 'Polly.Joanna' }, 'Thank you for calling Domotik Solutions. Please wait a moment while I connect you with Elena.');
+  twiml.connect().stream({ url: `wss://${PUBLIC_BASE_URL}/media-stream` });
+  res.type("text/xml").send(twiml.toString());
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena v15.0 Sniper Ready`));
+server.listen(PORT, () => console.log(`🚀 Elena v17.0 Dispatcher Active`));
