@@ -28,15 +28,25 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Your name is Elena from Domotik Solutions. 
-        - YOU ARE A SCHEDULER. 
-        - MANDATORY DATA TO COLLECT: 1. Customer Name, 2. Full Address, 3. Problem/Service, 4. Time for tomorrow.
-        - BE CONCISE: Ask one thing at a time. 
-        - INTERRUPT: If the customer speaks, stop immediately.`,
+        instructions: `Eres Elena de Domotik Solutions. Tu ÚNICO objetivo es llenar esta ficha:
+        1. Servicio solicitado.
+        2. Dirección completa.
+        3. Nombre del cliente.
+        4. Hora para mañana.
+
+        REGLAS:
+        - No des explicaciones largas de lo que hacemos.
+        - Si el cliente no te da la dirección, pídela amablemente otra vez.
+        - Sé extremadamente breve (máximo 15 palabras por respuesta).
+        - Si el cliente habla, cállate inmediatamente.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
-        turn_detection: { type: "server_vad", threshold: 0.4, silence_duration_ms: 800 }
+        turn_detection: { 
+            type: "server_vad", 
+            threshold: 0.4, 
+            silence_duration_ms: 600 // Respuesta rápida para que no haya baches
+        }
       }
     }));
   });
@@ -44,7 +54,7 @@ wss.on("connection", (twilioWs) => {
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
     
-    // CORTE DE AUDIO SI EL CLIENTE HABLA
+    // CORTE DE AUDIO INSTANTÁNEO (BARGE-IN)
     if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
       twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       oaWs.send(JSON.stringify({ type: "response.cancel" }));
@@ -70,11 +80,11 @@ wss.on("connection", (twilioWs) => {
 
   twilioWs.on("close", async () => {
     if (fullTranscript.length > 2) {
-      // Formateamos el mensaje como una orden de trabajo para los técnicos
-      const report = fullTranscript.join('\n');
+      // Creamos un resumen limpio buscando solo las líneas con datos
+      const summary = fullTranscript.join('\n');
       try {
         await client.messages.create({
-          body: `🛠️ *ORDEN DE VISITA TÉCNICA - DOMOTIK*\n\nRESUMEN:\n${report.slice(-800)}`,
+          body: `🛠️ *NUEVA ORDEN DE SERVICIO*\n\nDATOS CAPTURADOS:\n${summary.slice(-700)}`,
           from: TWILIO_WHATSAPP, to: MI_WHATSAPP
         });
       } catch (e) { console.error("Error WhatsApp:", e.message); }
@@ -83,12 +93,12 @@ wss.on("connection", (twilioWs) => {
   });
 });
 
-// CAMBIO CRÍTICO: Twilio da el saludo inicial para que NUNCA falle
 app.post("/twilio/voice", (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
-  twiml.say({ voice: 'Polly.Joanna' }, 'Thank you for calling Domotik Solutions. Please wait a moment while I connect you with Elena.');
+  // Saludo inicial forzado para que no haya silencio
+  twiml.say({ voice: 'Polly.Joanna', language: 'en-US' }, 'Hi! Thanks for calling Domotik Solutions. Elena is here to help you.');
   twiml.connect().stream({ url: `wss://${PUBLIC_BASE_URL}/media-stream` });
   res.type("text/xml").send(twiml.toString());
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena v17.0 Dispatcher Active`));
+server.listen(PORT, () => console.log(`🚀 Elena v18.0 Closer Active`));
