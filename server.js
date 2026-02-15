@@ -28,17 +28,15 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Eres Elena de Domotik Solutions. 
-        PRESENTACIÓN: "Hola, soy Elena de Domotik Solutions. Ofrecemos automatización residencial y comercial. ¿En qué puedo ayudarte hoy?"
+        instructions: `Your name is Elena from Domotik Solutions.
         
-        REGLAS CRÍTICAS:
-        1. DEBES PEDIR EL NÚMERO DE TELÉFONO SIEMPRE. Es obligatorio para el reporte.
-        2. Pregunta: ¿Es para un servicio residencial o comercial?
-        3. Pide Dirección y Nombre.
-        
-        CIERRE:
-        - Si dicen "Bye" o "Gracias", despídete brevemente. El sistema colgará solo.
-        - Mantén las respuestas de menos de 15 palabras.`,
+        PITCH INICIAL: "Hi! I'm Elena from Domotik Solutions. We install and repair Smart Home systems and Business Security. We do Residential and Commercial work. How can I help you today?"
+
+        REGLAS DE HIERRO:
+        1. EL TELÉFONO ES PRIMERO: Antes de pedir la dirección, di: "I need your phone number first to register the service".
+        2. NO AVANCES si no te dan el número.
+        3. CAPTURA: Nombre, Teléfono, Dirección y problema técnico.
+        4. BREVEDAD: Máximo 12 palabras por respuesta.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
@@ -50,7 +48,6 @@ wss.on("connection", (twilioWs) => {
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
     
-    // BARGE-IN: Si el cliente habla, Elena se calla
     if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
       twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       oaWs.send(JSON.stringify({ type: "response.cancel" }));
@@ -60,7 +57,6 @@ wss.on("connection", (twilioWs) => {
       const text = evt.transcript.toLowerCase();
       fullTranscript.push(`Cliente: ${evt.transcript}`);
       
-      // AUTO-HANGUP
       if (text.includes("bye") || text.includes("adiós") || text.includes("gracias bye")) {
         setTimeout(() => { twilioWs.close(); }, 2000);
       }
@@ -85,14 +81,14 @@ wss.on("connection", (twilioWs) => {
 
   twilioWs.on("close", async () => {
     if (fullTranscript.length > 2) {
-      // Extraemos números de teléfono del texto para ponerlos arriba
       const allText = fullTranscript.join(' ');
-      const phoneMatch = allText.match(/\d{7,10}/g); // Busca secuencias de 7 a 10 números
-      const extractedPhone = phoneMatch ? phoneMatch.join(' / ') : "No capturado en voz";
+      // Regex mejorado para capturar números de teléfono dictados
+      const phoneMatch = allText.match(/(\d[\s-]?){7,11}/g); 
+      const extractedPhone = phoneMatch ? phoneMatch[0].replace(/\s/g, '') : "⚠️ NO CAPTURADO";
 
       try {
         await client.messages.create({
-          body: `🚀 *NUEVA ORDEN TÉCNICA*\n\n📞 TELÉFONO CLIENTE: ${extractedPhone}\n\n📝 DETALLE:\n${fullTranscript.join('\n').slice(-700)}`,
+          body: `🚀 *NUEVA ORDEN DE SERVICIO*\n\n📞 TELÉFONO: ${extractedPhone}\n\n📝 CHAT:\n${fullTranscript.join('\n').slice(-800)}`,
           from: TWILIO_WHATSAPP, to: MI_WHATSAPP
         });
       } catch (e) { console.error("Error WhatsApp:", e.message); }
@@ -103,10 +99,10 @@ wss.on("connection", (twilioWs) => {
 
 app.post("/twilio/voice", (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
-  // Twilio saluda primero para asegurar audio inmediato
-  twiml.say({ voice: 'Polly.Joanna' }, 'Connecting to Domotik Solutions residential and commercial support.');
+  // El saludo de Twilio ahora es más corto para dejar que Elena haga el pitch
+  twiml.say({ voice: 'Polly.Joanna' }, 'Connecting to Domotik Solutions.');
   twiml.connect().stream({ url: `wss://${PUBLIC_BASE_URL}/media-stream` });
   res.type("text/xml").send(twiml.toString());
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena v20.0 Ready`));
+server.listen(PORT, () => console.log(`🚀 Elena v21.0 Sniper Active`));
