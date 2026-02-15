@@ -24,16 +24,14 @@ wss.on("connection", (twilioWs) => {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "OpenAI-Beta": "realtime=v1" }
   });
 
-  // SALUDO CON RETRASO PARA ASEGURAR CONEXIÓN
   const sendGreeting = () => {
     if (!greeted && streamSid) {
       greeted = true;
-      console.log("📢 Enviando saludo sincronizado...");
       oaWs.send(JSON.stringify({
         type: "response.create",
         response: { 
           modalities: ["audio", "text"], 
-          instructions: "Greet immediately in English: 'Thank you for calling Domotik Solutions, leaders in premium automation. This is Elena, how can I help you today?'" 
+          instructions: "Greet clearly: 'Hello! This is Elena from Domotik Solutions. How can I help you today?'" 
         }
       }));
     }
@@ -44,17 +42,17 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Your name is Elena, assistant at Domotik Solutions.
-        - IMPORTANT: You are on speakerphone. Ignore your own echo and background noise.
-        - PRIMARY LANGUAGE: English. If the client speaks Spanish, reply in Spanish with a professional Colombian accent.
-        - END OF CALL: Summarize the lead (Name, Phone, Address, Service needed) internally for the transcript.`,
+        instructions: `Eres Elena de Domotik Solutions. 
+        - REGLA CRÍTICA: Estás en modo altavoz. Ignora ecos.
+        - No respondas a frases de una sola palabra como 'Thank you' o 'Hello' si suenan a eco.
+        - Idioma: Inglés primero, español después.`,
         voice: "shimmer",
         input_audio_transcription: { model: "whisper-1" },
         turn_detection: { 
           type: "server_vad", 
-          threshold: 0.98, // ⬅️ Máximo nivel: casi sorda al ruido, solo escucha voces directas
-          prefix_padding_ms: 800,
-          silence_duration_ms: 1800 // ⬅️ Espera más para no interrumpir en altavoz
+          threshold: 0.99, // ⬅️ Nivel máximo para matar el eco
+          prefix_padding_ms: 1000,
+          silence_duration_ms: 2000 // ⬅️ Más tiempo de espera para confirmar que el humano terminó
         }
       }
     }));
@@ -63,53 +61,45 @@ wss.on("connection", (twilioWs) => {
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
 
-    // SALUDO: Esperamos a que Twilio esté listo
     if (evt.type === "session.updated" && streamSid && !greeted) {
-        setTimeout(sendGreeting, 2500); // 2.5 segundos de gracia
+        setTimeout(sendGreeting, 3000); // ⬅️ 3 segundos para que el canal esté limpio
     }
 
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
-      fullTranscript += `Cliente: ${evt.transcript}\n`;
+      // FILTRO: Si lo que "escuchó" es muy corto, no lo agregues al reporte (es eco)
+      if (evt.transcript.trim().length > 5) {
+        fullTranscript += `Cliente: ${evt.transcript}\n`;
+      }
     }
+    
     if (evt.type === "response.audio_transcript.done") {
       fullTranscript += `Elena: ${evt.transcript}\n`;
     }
 
+    // ELIMINAR INTERRUPCIONES POR ECO
     if (evt.type === "input_audio_buffer.speech_started") {
-      if (streamSid) twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
-      oaWs.send(JSON.stringify({ type: "response.cancel" }));
+       // No limpiamos el buffer inmediatamente para evitar cortes por ruido blanco
+       console.log("Detección de voz (posible eco)...");
     }
 
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
-
-    if (evt.type === "response.done") {
-      const text = evt.response?.output?.[0]?.content?.[0]?.transcript?.toLowerCase() || "";
-      if (["bye", "adiós", "thanks", "gracias"].some(d => text.includes(d))) {
-        setTimeout(() => { if (twilioWs.readyState === WebSocket.OPEN) twilioWs.close(); }, 3000);
-      }
-    }
   });
 
   twilioWs.on("message", (raw) => {
     const msg = JSON.parse(raw.toString());
-    if (msg.event === "start") { streamSid = msg.start.streamSid; console.log("📞 Stream conectado"); }
+    if (msg.event === "start") { streamSid = msg.start.streamSid; }
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
       oaWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: msg.media.payload }));
     }
   });
 
   twilioWs.on("close", async () => {
-    // 📩 WHATSAPP RESUMIDO
-    if (fullTranscript.length > 20) {
+    if (fullTranscript.length > 30) {
       try {
-        // Pedimos a la API de Twilio enviar solo lo importante
-        const resumenLineas = fullTranscript.split('\n');
-        const resumenFiltrado = resumenLineas.filter(l => l.includes("2835") || l.includes("Mañana") || l.includes("Cliente:")).join('\n');
-
         await client.messages.create({
-          body: `🏠 *Nuevo Lead Domotik*\n\n${fullTranscript.slice(-400)}`, // Envía los últimos 400 caracteres (el cierre)
+          body: `🏠 *Resumen Domotik*\n\n${fullTranscript}`,
           from: TWILIO_WHATSAPP,
           to: MI_WHATSAPP
         });
@@ -123,4 +113,4 @@ app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect></Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena v5.0 Lista`));
+server.listen(PORT, () => console.log(`🚀 Elena v5.5 (Anti-Eco)`));
