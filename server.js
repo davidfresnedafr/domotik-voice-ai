@@ -2,14 +2,13 @@ import express from "express";
 import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
 import twilio from "twilio";
-import OpenAI from "openai"; // Añadimos la librería estándar de OpenAI para el análisis final
 
+// --- CONFIGURACIÓN DE VARIABLES ---
 const PORT = process.env.PORT || 10000;
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const PUBLIC_BASE_URL = "domotik-voice-ai.onrender.com";
 
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-const openaiAnalista = new OpenAI({ apiKey: OPENAI_API_KEY }); // Instancia para el análisis de datos
 const MI_WHATSAPP = "whatsapp:+15617141075"; 
 const TWILIO_WHATSAPP = "whatsapp:+14155238886"; 
 
@@ -87,33 +86,41 @@ wss.on("connection", (twilioWs) => {
       const chat = fullTranscript.join('\n');
 
       try {
-        // --- NUEVA PARTE: ANALISTA DE DATOS CON IA ---
-        console.log("🧠 Analizando datos de la conversación...");
-        const completion = await openaiAnalista.chat.completions.create({
-          model: "gpt-4o",
-          messages: [
-            { role: "system", content: "Extract Name, Phone, and Address from the following chat. Format as JSON: { 'name': '', 'phone': '', 'address': '' }. If not found, put 'Not specified'." },
-            { role: "user", content: chat }
-          ],
-          response_format: { type: "json_object" }
+        console.log("🧠 Analizando datos finales...");
+        
+        // --- ANÁLISIS POR FETCH (SIN INSTALAR NADA NUEVO) ---
+        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${OPENAI_API_KEY}`
+          },
+          body: JSON.stringify({
+            model: "gpt-4o-mini",
+            messages: [
+              { role: "system", content: "Extract Name, Phone, and Address from the chat. Return ONLY JSON: { 'name': '', 'phone': '', 'address': '' }" },
+              { role: "user", content: chat }
+            ],
+            response_format: { type: "json_object" }
+          })
         });
 
-        const dataExtraida = JSON.parse(completion.choices[0].message.content);
+        const result = await response.json();
+        const data = JSON.parse(result.choices[0].message.content);
 
         // --- ENVÍO DE WHATSAPP ---
         await client.messages.create({
-          body: `🚀 *ORDEN TÉCNICA INTELIGENTE*\n\n` +
-                `👤 *NOMBRE:* ${dataExtraida.name.toUpperCase()}\n` +
-                `📞 *TELÉFONO:* ${dataExtraida.phone}\n` +
-                `📍 *DIRECCIÓN:* ${dataExtraida.address}\n\n` +
-                `--------------------------\n` +
-                `📝 *CHAT COMPLETO:*\n${chat.slice(-800)}`,
+          body: `🚀 *ORDEN TÉCNICA DOMOTIK*\n\n` +
+                `👤 *NOMBRE:* ${data.name.toUpperCase()}\n` +
+                `📞 *TELÉFONO:* ${data.phone}\n` +
+                `📍 *DIRECCIÓN:* ${data.address}\n\n` +
+                `📝 *RESUMEN:*\n${chat.slice(-600)}`,
           from: TWILIO_WHATSAPP, 
           to: MI_WHATSAPP
         });
-        console.log("✅ Reporte IA enviado.");
+        console.log("✅ Reporte enviado correctamente.");
       } catch (e) {
-        console.error("❌ Error en análisis o WhatsApp:", e.message);
+        console.error("❌ Error en el reporte:", e.message);
       }
     }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
@@ -124,4 +131,4 @@ app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect></Response>`);
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 v32.0 IA Analysis Ready`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 v32.0 Listo`));
