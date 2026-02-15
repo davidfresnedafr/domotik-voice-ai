@@ -1,16 +1,22 @@
 {
-  "name": "domotik-voice-ai",
+  "name": "elena-domotik-ai",
   "version": "1.0.0",
-  "main": "server.js",
+  "description": "Asistente de IA para Domotik Solutions South Florida",
+  "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "engines": {
-    "node": ">=18"
-  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
     "express": "^4.19.2",
+    "twilio": "^5.4.0",
     "ws": "^8.17.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
