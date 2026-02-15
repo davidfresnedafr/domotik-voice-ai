@@ -27,11 +27,12 @@ wss.on("connection", (twilioWs) => {
   const sendGreeting = () => {
     if (!greeted && streamSid && oaWs.readyState === WebSocket.OPEN) {
       greeted = true;
+      console.log("🚀 Lanza saludo: Domotik Solutions");
       oaWs.send(JSON.stringify({
         type: "response.create",
         response: { 
           modalities: ["audio", "text"], 
-          instructions: "First Greeting: 'Hello! This is Elena from Domotik Solutions. How can I assist you with your project today?'" 
+          instructions: "Greeting (Speak clearly): 'Hello! Thank you for calling Domotik Solutions. This is Elena. How can I assist you with your project today?'" 
         }
       }));
     }
@@ -43,20 +44,19 @@ wss.on("connection", (twilioWs) => {
       session: {
         modalities: ["text", "audio"],
         instructions: `Your name is Elena, assistant at Domotik Solutions. 
-        - CRITICAL: You are talking to a customer on SPEAKERPHONE. 
-        - IGNORE all echoes and background mumbles. 
-        - If you hear something that sounds like your own previous words, DO NOT RESPOND.
-        - Wait for a CLEAR, LOUD human voice before answering.
-        - If they want an appointment, get: Name, Address, and Time.`,
+        - PRIORITY: Always stay in English. 
+        - Switch to Spanish ONLY if the client speaks a full sentence in Spanish.
+        - If they say 'Hello' or 'Hola', answer in English first.
+        - You are on speakerphone, be patient.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         input_audio_transcription: { model: "whisper-1" },
         turn_detection: { 
           type: "server_vad", 
-          threshold: 0.4, // Bajamos el threshold pero...
+          threshold: 0.5, 
           prefix_padding_ms: 500,
-          silence_duration_ms: 1500 // ...aumentamos el silencio para que no se interrumpa sola
+          silence_duration_ms: 1200 
         }
       }
     }));
@@ -65,16 +65,7 @@ wss.on("connection", (twilioWs) => {
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
 
-    if (evt.type === "session.updated") {
-      setTimeout(sendGreeting, 2500); 
-    }
-
-    // Si la IA detecta que el cliente empezó a hablar, limpiamos el buffer de salida
-    // Esto evita que el eco se acumule
-    if (evt.type === "input_audio_buffer.speech_started") {
-        console.log("Voz detectada - Limpiando eco");
-    }
-
+    // Si recibimos confirmación de que la respuesta se creó, la enviamos a Twilio
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
@@ -83,35 +74,36 @@ wss.on("connection", (twilioWs) => {
         fullTranscript += `Elena: ${evt.transcript}\n`;
     }
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
-        // FILTRO DE SEGURIDAD: Si la transcripción es idéntica a lo que ella dijo, la ignoramos.
-        const transcript = evt.transcript.toLowerCase();
-        if (transcript.length > 5 && !transcript.includes("domotik solutions")) {
-            fullTranscript += `Cliente: ${evt.transcript}\n`;
-        }
+        const t = evt.transcript.toLowerCase();
+        if (t.length > 3) fullTranscript += `Cliente: ${evt.transcript}\n`;
     }
   });
 
   twilioWs.on("message", (raw) => {
     const msg = JSON.parse(raw.toString());
+    
     if (msg.event === "start") {
       streamSid = msg.start.streamSid;
-      if (oaWs.readyState === WebSocket.OPEN) {
-        oaWs.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
-      }
+      console.log("📞 Llamada iniciada. Esperando estabilización...");
     }
+    
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
+      // ENVIAR SALUDO SOLO DESPUÉS DE RECIBIR EL PRIMER PAQUETE DE AUDIO REAL
+      if (!greeted) {
+        setTimeout(sendGreeting, 1500); // 1.5 segundos de margen de seguridad
+      }
       oaWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: msg.media.payload }));
     }
   });
 
   twilioWs.on("close", async () => {
-    if (fullTranscript.length > 20) {
+    if (fullTranscript.length > 15) {
         try {
             await client.messages.create({
-                body: `🏠 *Lead Report - Domotik*\n\n${fullTranscript}`,
+                body: `🏠 *Lead Update: Domotik*\n\n${fullTranscript}`,
                 from: TWILIO_WHATSAPP, to: MI_WHATSAPP
             });
-        } catch (e) { console.error("Error WhatsApp:", e.message); }
+        } catch (e) { console.error("Error SMS:", e.message); }
     }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
@@ -121,11 +113,10 @@ app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`
     <Response>
       <Connect>
-        <Stream url="wss://${PUBLIC_BASE_URL}/media-stream">
-          <Parameter name="inboundTracks" value="inbound_audio" />
-        </Stream>
+        <Stream url="wss://${PUBLIC_BASE_URL}/media-stream" />
       </Connect>
+      <Pause length="2"/> 
     </Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena v11.0 Echo-Killer Ready`));
+server.listen(PORT, () => console.log(`🚀 Elena v12.0 Ready`));
