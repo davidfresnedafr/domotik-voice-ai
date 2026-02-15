@@ -2,7 +2,6 @@ import express from "express";
 import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
 import twilio from "twilio";
-import axios from "axios"; // Usaremos axios para asegurar que los datos se envíen siempre
 
 const PORT = process.env.PORT || 10000;
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
@@ -17,28 +16,12 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/media-stream" });
 
 wss.on("connection", (twilioWs) => {
-  console.log("📞 Nueva llamada conectada");
   let streamSid = null;
   let fullTranscript = [];
-  let callTerminated = false;
 
   const oaWs = new WebSocket("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "OpenAI-Beta": "realtime=v1" }
   });
-
-  const terminateCall = async () => {
-    if (callTerminated) return;
-    callTerminated = true;
-    console.log("👋 Finalizando llamada...");
-    setTimeout(async () => {
-      try {
-        if (streamSid) {
-          await client.calls(streamSid).update({ status: 'completed' });
-        }
-      } catch (e) { console.log("Llamada ya cerrada"); }
-      twilioWs.close();
-    }, 1500);
-  };
 
   oaWs.on("open", () => {
     oaWs.send(JSON.stringify({
@@ -46,9 +29,9 @@ wss.on("connection", (twilioWs) => {
       session: {
         modalities: ["text", "audio"],
         instructions: `Your name is Elena from Domotik Solutions. 
-        PITCH: "Hi! I'm Elena from Domotik Solutions. We specialize in the installation and repair of Smart Home systems and Business Security for both Residential and Commercial clients. How can I help you today?"
-        GOAL: Collect Name, Phone, and Address.
-        RULES: If the user says 'Bye', 'Goodbye', 'Adiós' or 'Thank you', say goodbye and end the call.`,
+        PITCH: "Hi! I'm Elena from Domotik Solutions. We specialize in Smart Home and Business Security for Residential and Commercial clients. How can I help you today?"
+        GOAL: You MUST collect Name, Phone number, and Service Address. Be persistent.
+        TERMINATION: If the user says 'Bye' or 'Thank you', say goodbye and hang up.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
@@ -58,12 +41,14 @@ wss.on("connection", (twilioWs) => {
 
     oaWs.send(JSON.stringify({
       type: "response.create",
-      response: { instructions: "Introduce yourself with the official pitch: 'Hi! I'm Elena from Domotik Solutions. We specialize in the installation and repair of Smart Home systems and Business Security for both Residential and Commercial clients. How can I help you today?'" }
+      response: { instructions: "Greet the customer immediately with the pitch." }
     }));
   });
 
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
+
+    // Manejo de audio y transcripción
     if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
       twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       oaWs.send(JSON.stringify({ type: "response.cancel" }));
@@ -71,13 +56,16 @@ wss.on("connection", (twilioWs) => {
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
+
+    // CAPTURA DE TRANSCRIPCIÓN (Aseguramos que se guarde todo)
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
-      const text = evt.transcript.toLowerCase();
       fullTranscript.push(`Cliente: ${evt.transcript}`);
-      
-      const despedidas = ["bye", "goodbye", "adiós", "adios", "gracias", "thank you", "thanks"];
-      if (despedidas.some(p => text.includes(p))) {
-        terminateCall();
+      const text = evt.transcript.toLowerCase();
+      if (text.includes("bye") || text.includes("adios") || text.includes("adiós") || text.includes("gracias") || text.includes("thank you")) {
+        setTimeout(() => {
+          if (streamSid) client.calls(streamSid).update({status: 'completed'}).catch(() => {});
+          twilioWs.close();
+        }, 2000);
       }
     }
     if (evt.type === "response.audio_transcript.done") {
@@ -94,33 +82,49 @@ wss.on("connection", (twilioWs) => {
   });
 
   twilioWs.on("close", async () => {
-    if (fullTranscript.length > 2) {
+    console.log("🔴 Llamada cerrada. Procesando reporte...");
+    
+    // Esperamos 2 segundos para asegurar que todas las transcripciones entraron al array
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    if (fullTranscript.length > 0) {
       const chat = fullTranscript.join('\n');
+      
       try {
-        // --- EXTRACCIÓN DE DATOS REFORZADA ---
-        const response = await axios.post("https://api.openai.com/v1/chat/completions", {
-          model: "gpt-4o-mini",
-          messages: [
-            { role: "system", content: "Extract customer information from the chat. If not mentioned, return 'Not provided'. Format as JSON: { 'name': '', 'phone': '', 'address': '' }" },
-            { role: "user", content: chat }
-          ],
-          response_format: { type: "json_object" }
-        }, {
-          headers: { "Authorization": `Bearer ${OPENAI_API_KEY}` }
+        // LLAMADA AL ANALISTA (FETCH)
+        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${OPENAI_API_KEY}`
+          },
+          body: JSON.stringify({
+            model: "gpt-4o-mini",
+            messages: [
+              { role: "system", content: "Extract customer Name, Phone, and Address. Format as JSON: { 'name': '', 'phone': '', 'address': '' }. If a data is not there, search carefully in the text or put 'Not provided'." },
+              { role: "user", content: chat }
+            ],
+            response_format: { type: "json_object" }
+          })
         });
 
-        const data = response.data.choices[0].message.content ? JSON.parse(response.data.choices[0].message.content) : { name: "Error", phone: "Error", address: "Error" };
+        const jsonRes = await response.json();
+        const info = JSON.parse(jsonRes.choices[0].message.content);
 
+        // ENVÍO WHATSAPP
         await client.messages.create({
-          body: `🚀 *ORDEN TÉCNICA DOMOTIK*\n\n👤 *NOMBRE:* ${data.name.toUpperCase()}\n📞 *TEL:* ${data.phone}\n📍 *DIR:* ${data.address}\n\n📝 *CHAT:*\n${chat.slice(-600)}`,
+          body: `🚀 *ORDEN TÉCNICA DOMOTIK*\n\n` +
+                `👤 *NOMBRE:* ${info.name.toUpperCase()}\n` +
+                `📞 *TEL:* ${info.phone}\n` +
+                `📍 *DIR:* ${info.address}\n\n` +
+                `📝 *HISTORIAL:*\n${chat.slice(-600)}`,
           from: TWILIO_WHATSAPP, to: MI_WHATSAPP
         });
-        console.log("✅ Reporte enviado a WhatsApp");
-      } catch (e) {
-        console.error("❌ Error procesando reporte:", e.message);
+        console.log("✅ WhatsApp enviado con éxito.");
+      } catch (err) {
+        console.error("❌ Error enviando reporte:", err);
       }
     }
-    if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
 });
 
@@ -128,4 +132,4 @@ app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect></Response>`);
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 v32.2 Saludo y Cierre Corregido`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Servidor Activo en Puerto ${PORT}`));
