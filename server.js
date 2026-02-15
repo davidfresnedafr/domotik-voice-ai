@@ -27,12 +27,13 @@ wss.on("connection", (twilioWs) => {
   const sendGreeting = () => {
     if (!greeted && streamSid && oaWs.readyState === WebSocket.OPEN) {
       greeted = true;
-      console.log("🚀 Lanza saludo: Domotik Solutions");
+      console.log("📢 Lanzando saludo oficial...");
+      // Forzamos el saludo exacto
       oaWs.send(JSON.stringify({
         type: "response.create",
         response: { 
           modalities: ["audio", "text"], 
-          instructions: "Greeting (Speak clearly): 'Hello! Thank you for calling Domotik Solutions. This is Elena. How can I assist you with your project today?'" 
+          instructions: "Respond EXACTLY with: 'Hello! Thank you for calling Domotik Solutions. This is Elena. How can I assist you with your automation project today?'" 
         }
       }));
     }
@@ -44,19 +45,18 @@ wss.on("connection", (twilioWs) => {
       session: {
         modalities: ["text", "audio"],
         instructions: `Your name is Elena, assistant at Domotik Solutions. 
-        - PRIORITY: Always stay in English. 
-        - Switch to Spanish ONLY if the client speaks a full sentence in Spanish.
-        - If they say 'Hello' or 'Hola', answer in English first.
-        - You are on speakerphone, be patient.`,
+        - DO NOT IMAGINE DETAILS: If the user doesn't specify a room (like living room), do not mention it.
+        - SPEECH RULE: If audio is unclear, say 'I'm sorry, I didn't catch that. Could you repeat?'
+        - LANGUAGE: Stay in English unless they speak a full sentence in Spanish.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         input_audio_transcription: { model: "whisper-1" },
         turn_detection: { 
           type: "server_vad", 
-          threshold: 0.5, 
-          prefix_padding_ms: 500,
-          silence_duration_ms: 1200 
+          threshold: 0.6, // Nivel equilibrado para no inventar sonidos
+          prefix_padding_ms: 300,
+          silence_duration_ms: 1000 
         }
       }
     }));
@@ -65,7 +65,6 @@ wss.on("connection", (twilioWs) => {
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
 
-    // Si recibimos confirmación de que la respuesta se creó, la enviamos a Twilio
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
@@ -75,7 +74,8 @@ wss.on("connection", (twilioWs) => {
     }
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
         const t = evt.transcript.toLowerCase();
-        if (t.length > 3) fullTranscript += `Cliente: ${evt.transcript}\n`;
+        // Filtro para ignorar transcripciones basura que causan alucinaciones
+        if (t.length > 5) fullTranscript += `Cliente: ${evt.transcript}\n`;
     }
   });
 
@@ -84,23 +84,25 @@ wss.on("connection", (twilioWs) => {
     
     if (msg.event === "start") {
       streamSid = msg.start.streamSid;
-      console.log("📞 Llamada iniciada. Esperando estabilización...");
+      // Limpiamos buffer para que el saludo entre en línea limpia
+      if (oaWs.readyState === WebSocket.OPEN) {
+        oaWs.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
+      }
     }
     
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
-      // ENVIAR SALUDO SOLO DESPUÉS DE RECIBIR EL PRIMER PAQUETE DE AUDIO REAL
       if (!greeted) {
-        setTimeout(sendGreeting, 1500); // 1.5 segundos de margen de seguridad
+        setTimeout(sendGreeting, 1000); // 1 segundo después del primer bit de audio
       }
       oaWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: msg.media.payload }));
     }
   });
 
   twilioWs.on("close", async () => {
-    if (fullTranscript.length > 15) {
+    if (fullTranscript.length > 20) {
         try {
             await client.messages.create({
-                body: `🏠 *Lead Update: Domotik*\n\n${fullTranscript}`,
+                body: `🏠 *Lead Report: Domotik*\n\n${fullTranscript}`,
                 from: TWILIO_WHATSAPP, to: MI_WHATSAPP
             });
         } catch (e) { console.error("Error SMS:", e.message); }
@@ -115,8 +117,8 @@ app.post("/twilio/voice", (req, res) => {
       <Connect>
         <Stream url="wss://${PUBLIC_BASE_URL}/media-stream" />
       </Connect>
-      <Pause length="2"/> 
+      <Pause length="1"/> 
     </Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena v12.0 Ready`));
+server.listen(PORT, () => console.log(`🚀 Elena v13.0 READY`));
