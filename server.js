@@ -16,7 +16,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/media-stream" });
 
 wss.on("connection", (twilioWs) => {
-  console.log("📞 Cliente conectado");
+  console.log("📞 Nueva llamada conectada");
   let streamSid = null;
   let fullTranscript = [];
 
@@ -25,15 +25,19 @@ wss.on("connection", (twilioWs) => {
   });
 
   oaWs.on("open", () => {
-    console.log("🟢 Conexión con OpenAI exitosa");
+    console.log("🟢 OpenAI Realtime Listo");
     oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
         instructions: `Your name is Elena from Domotik Solutions. 
-        PITCH: "Hi! I'm Elena from Domotik Solutions. We install and repair Smart Home systems and Business Security. How can I help you today?"
-        - MISSION: You MUST get Name, Phone Number, and Address. 
-        - BE BRIEF. No prices. If they say 'Bye', the call ends.`,
+        OFFICIAL GREETING: "Hi! I'm Elena from Domotik Solutions. We install and repair Smart Home systems and Business Security for Residential and Commercial clients. How can I help you today?"
+        
+        STRICT RULES:
+        1. You MUST get: Name, Phone Number, and Address. 
+        2. BE BRIEF: Under 12 words per response.
+        3. NO PRICES: Say 'A technician will provide a quote after the visit.'
+        4. HANG UP: If they say 'Bye', stop talking.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
@@ -56,8 +60,9 @@ wss.on("connection", (twilioWs) => {
 
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
       fullTranscript.push(`Cliente: ${evt.transcript}`);
-      if (evt.transcript.toLowerCase().includes("bye")) setTimeout(() => twilioWs.close(), 1500);
+      if (evt.transcript.toLowerCase().includes("bye")) setTimeout(() => twilioWs.close(), 1200);
     }
+    
     if (evt.type === "response.audio_transcript.done") {
       fullTranscript.push(`Elena: ${evt.transcript}`);
     }
@@ -77,11 +82,11 @@ wss.on("connection", (twilioWs) => {
       const phoneMatch = summary.match(/(\d[\s-]?){7,12}/g);
       const phone = phoneMatch ? phoneMatch[phoneMatch.length - 1].replace(/\s/g, '') : "⚠️ Not Found";
 
-      // Usamos slice(-1200) para evitar el error de 1600 caracteres de Twilio
+      // Evitamos el error de límite de caracteres
       await client.messages.create({
-        body: `🏠 *REPORTE DOMOTIK*\n📞 TEL: ${phone}\n\n📝 RESUMEN:\n${summary.slice(-1200)}`,
+        body: `🚀 *DOMOTIK JOB ORDER*\n📞 PHONE: ${phone}\n\n📝 SUMMARY:\n${summary.slice(-1100)}`,
         from: TWILIO_WHATSAPP, to: MI_WHATSAPP
-      }).catch(e => console.error("Error SMS:", e.message));
+      }).catch(e => console.error("WhatsApp Error:", e.message));
     }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
@@ -90,14 +95,13 @@ wss.on("connection", (twilioWs) => {
 app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`
     <Response>
-      <Say voice="Polly.Joanna">Welcome to Domotik Solutions. Connecting to Elena.</Say>
+      <Say voice="Polly.Joanna">Connecting to Domotik Solutions.</Say>
       <Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect>
     </Response>
   `);
 });
 
-// Reinicio limpio del servidor
-server.close(() => {
-  server.listen(PORT, () => console.log(`🚀 v26.0 Corriendo en puerto ${PORT}`));
+// Solución definitiva al error ERR_SERVER_ALREADY_LISTEN
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 v27.0 Online on Port ${PORT}`);
 });
-server.listen(PORT);
