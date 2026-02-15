@@ -2,13 +2,14 @@ import express from "express";
 import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
 import twilio from "twilio";
+import OpenAI from "openai"; // Añadimos la librería estándar de OpenAI para el análisis final
 
-// --- CONFIGURACIÓN DE VARIABLES ---
 const PORT = process.env.PORT || 10000;
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const PUBLIC_BASE_URL = "domotik-voice-ai.onrender.com";
 
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const openaiAnalista = new OpenAI({ apiKey: OPENAI_API_KEY }); // Instancia para el análisis de datos
 const MI_WHATSAPP = "whatsapp:+15617141075"; 
 const TWILIO_WHATSAPP = "whatsapp:+14155238886"; 
 
@@ -26,7 +27,6 @@ wss.on("connection", (twilioWs) => {
   });
 
   oaWs.on("open", () => {
-    // 1. Configuración de la IA
     oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
@@ -43,32 +43,24 @@ wss.on("connection", (twilioWs) => {
       }
     }));
 
-    // 2. Saludo Proactivo Inmediato
     oaWs.send(JSON.stringify({
       type: "response.create",
-      response: {
-        instructions: "Introduce yourself immediately with the official pitch."
-      }
+      response: { instructions: "Introduce yourself immediately with the official pitch." }
     }));
   });
 
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
-
     if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
       twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       oaWs.send(JSON.stringify({ type: "response.cancel" }));
     }
-
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
-
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
       const text = evt.transcript.toLowerCase();
       fullTranscript.push(`Cliente: ${evt.transcript}`);
-      
-      // Cierre fulminante por palabras clave
       const despedidas = ["bye", "goodbye", "adiós", "adios", "gracias", "thank you"];
       if (despedidas.some(p => text.includes(p))) {
         setTimeout(() => {
@@ -77,7 +69,6 @@ wss.on("connection", (twilioWs) => {
         }, 1800);
       }
     }
-
     if (evt.type === "response.audio_transcript.done") {
       fullTranscript.push(`Elena: ${evt.transcript}`);
     }
@@ -95,50 +86,42 @@ wss.on("connection", (twilioWs) => {
     if (fullTranscript.length > 2) {
       const chat = fullTranscript.join('\n');
 
-      // --- MOTOR DE EXTRACCIÓN PUNTUAL ---
-      
-      // 1. Teléfono: Busca cualquier serie de 7 a 12 números
-      const phoneMatch = chat.match(/(\d[\s-]?){7,12}/g);
-      const phone = phoneMatch ? phoneMatch[phoneMatch.length - 1].replace(/\s|-/g, '') : "⚠️ NO DETECTADO";
-
-      // 2. Nombre: Busca después de frases de presentación comunes
-      const nameMatch = chat.match(/Cliente: (?:hi|hello|this is|my name is|i am|soy|me llamo|habla) ([\w\s]+)/i);
-      const name = nameMatch ? nameMatch[1].split('\n')[0].trim() : "Revisar chat";
-
-      // 3. Dirección: Busca patrones de numeración + calle (incluyendo español)
-      const addressMatch = chat.match(/(?:\d+\s+[\w\s]+(?:street|st|ave|avenue|dr|drive|rd|road|lane|ln|blvd|calle|avenida|casa|apt))/i);
-      const address = addressMatch ? addressMatch[0] : "Revisar chat";
-
-      // --- ENVÍO DE WHATSAPP ---
       try {
+        // --- NUEVA PARTE: ANALISTA DE DATOS CON IA ---
+        console.log("🧠 Analizando datos de la conversación...");
+        const completion = await openaiAnalista.chat.completions.create({
+          model: "gpt-4o",
+          messages: [
+            { role: "system", content: "Extract Name, Phone, and Address from the following chat. Format as JSON: { 'name': '', 'phone': '', 'address': '' }. If not found, put 'Not specified'." },
+            { role: "user", content: chat }
+          ],
+          response_format: { type: "json_object" }
+        });
+
+        const dataExtraida = JSON.parse(completion.choices[0].message.content);
+
+        // --- ENVÍO DE WHATSAPP ---
         await client.messages.create({
-          body: `🚀 *NUEVA ORDEN TÉCNICA*\n\n` +
-                `👤 *NOMBRE:* ${name.toUpperCase()}\n` +
-                `📞 *TELÉFONO:* ${phone}\n` +
-                `📍 *DIRECCIÓN:* ${address}\n\n` +
+          body: `🚀 *ORDEN TÉCNICA INTELIGENTE*\n\n` +
+                `👤 *NOMBRE:* ${dataExtraida.name.toUpperCase()}\n` +
+                `📞 *TELÉFONO:* ${dataExtraida.phone}\n` +
+                `📍 *DIRECCIÓN:* ${dataExtraida.address}\n\n` +
                 `--------------------------\n` +
-                `📝 *TRANSCRIPCIÓN RESUMIDA:*\n${chat.slice(-800)}`,
+                `📝 *CHAT COMPLETO:*\n${chat.slice(-800)}`,
           from: TWILIO_WHATSAPP, 
           to: MI_WHATSAPP
         });
-        console.log("✅ Reporte puntual enviado.");
+        console.log("✅ Reporte IA enviado.");
       } catch (e) {
-        console.error("❌ Error enviando WhatsApp:", e.message);
+        console.error("❌ Error en análisis o WhatsApp:", e.message);
       }
     }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
 });
 
-// Endpoint para Twilio
 app.post("/twilio/voice", (req, res) => {
-  res.type("text/xml").send(`
-    <Response>
-      <Connect>
-        <Stream url="wss://${PUBLIC_BASE_URL}/media-stream" />
-      </Connect>
-    </Response>
-  `);
+  res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect></Response>`);
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 v31.0 Dispatcher Ready on Port ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 v32.0 IA Analysis Ready`));
