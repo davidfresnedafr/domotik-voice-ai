@@ -26,15 +26,17 @@ wss.on("connection", (twilioWs) => {
   });
 
   oaWs.on("open", () => {
+    // 1. Configuración de la IA con el PITCH solicitado
     oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
         instructions: `Your name is Elena from Domotik Solutions. 
-        PITCH: "Hi! I'm Elena from Domotik Solutions. We install and repair Smart Home systems and Business Security for Residential and Commercial clients. How can I help you today?"
-        GOAL: Collect Name, Phone, and Address.
+        OFFICIAL PITCH: "Hi! I'm Elena from Domotik Solutions. We specialize in the installation and repair of Smart Home systems and Business Security for both Residential and Commercial clients. How can I help you today?"
+        
+        GOAL: You must collect Name, Phone, and Address.
         TERMINATION: If the user says 'Bye', 'Goodbye', 'Adiós' or 'Thank you', say 'Goodbye' and the call will end.
-        RULES: Be direct. No filler words.`,
+        RULES: Be professional and direct. Mention Residential and Commercial services in your greeting.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
@@ -42,9 +44,12 @@ wss.on("connection", (twilioWs) => {
       }
     }));
 
+    // 2. Saludo Proactivo Inmediato con los detalles específicos
     oaWs.send(JSON.stringify({
       type: "response.create",
-      response: { instructions: "Introduce yourself immediately with the official pitch." }
+      response: { 
+        instructions: "Say exactly this: 'Hi! I'm Elena from Domotik Solutions. We specialize in the installation and repair of Smart Home systems and Business Security for both Residential and Commercial clients. How can I help you today?'" 
+      }
     }));
   });
 
@@ -84,11 +89,7 @@ wss.on("connection", (twilioWs) => {
   twilioWs.on("close", async () => {
     if (fullTranscript.length > 2) {
       const chat = fullTranscript.join('\n');
-
       try {
-        console.log("🧠 Analizando datos finales...");
-        
-        // --- ANÁLISIS POR FETCH (SIN INSTALAR NADA NUEVO) ---
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -98,27 +99,23 @@ wss.on("connection", (twilioWs) => {
           body: JSON.stringify({
             model: "gpt-4o-mini",
             messages: [
-              { role: "system", content: "Extract Name, Phone, and Address from the chat. Return ONLY JSON: { 'name': '', 'phone': '', 'address': '' }" },
+              { role: "system", content: "Extract Name, Phone, and Address. Return ONLY JSON: { 'name': '', 'phone': '', 'address': '' }" },
               { role: "user", content: chat }
             ],
             response_format: { type: "json_object" }
           })
         });
-
         const result = await response.json();
         const data = JSON.parse(result.choices[0].message.content);
 
-        // --- ENVÍO DE WHATSAPP ---
         await client.messages.create({
           body: `🚀 *ORDEN TÉCNICA DOMOTIK*\n\n` +
                 `👤 *NOMBRE:* ${data.name.toUpperCase()}\n` +
                 `📞 *TELÉFONO:* ${data.phone}\n` +
                 `📍 *DIRECCIÓN:* ${data.address}\n\n` +
                 `📝 *RESUMEN:*\n${chat.slice(-600)}`,
-          from: TWILIO_WHATSAPP, 
-          to: MI_WHATSAPP
+          from: TWILIO_WHATSAPP, to: MI_WHATSAPP
         });
-        console.log("✅ Reporte enviado correctamente.");
       } catch (e) {
         console.error("❌ Error en el reporte:", e.message);
       }
@@ -131,4 +128,4 @@ app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect></Response>`);
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 v32.0 Listo`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 v32.1 Saludo Residencial/Comercial Activo`));
