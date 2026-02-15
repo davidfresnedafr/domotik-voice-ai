@@ -3,6 +3,7 @@ import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
 import twilio from "twilio";
 
+// --- CONFIGURACIÓN DE VARIABLES ---
 const PORT = process.env.PORT || 10000;
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const PUBLIC_BASE_URL = "domotik-voice-ai.onrender.com";
@@ -16,6 +17,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/media-stream" });
 
 wss.on("connection", (twilioWs) => {
+  console.log("📞 Nueva llamada conectada");
   let streamSid = null;
   let fullTranscript = [];
 
@@ -24,15 +26,16 @@ wss.on("connection", (twilioWs) => {
   });
 
   oaWs.on("open", () => {
-    // 1. CONFIGURAR LA SESIÓN
+    // 1. Configuración de la IA
     oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
         instructions: `Your name is Elena from Domotik Solutions. 
-        PITCH: "Hi! I'm Elena from Domotik Solutions. We install and repair Smart Home systems and Business Security. How can I help you?"
+        PITCH: "Hi! I'm Elena from Domotik Solutions. We install and repair Smart Home systems and Business Security for Residential and Commercial clients. How can I help you today?"
         GOAL: Collect Name, Phone, and Address.
-        TERMINATION: If the user says 'Bye', 'Goodbye', 'Adiós' or 'Thank you', say 'Goodbye' and the call will end.`,
+        TERMINATION: If the user says 'Bye', 'Goodbye', 'Adiós' or 'Thank you', say 'Goodbye' and the call will end.
+        RULES: Be direct. No filler words.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
@@ -40,11 +43,11 @@ wss.on("connection", (twilioWs) => {
       }
     }));
 
-    // 2. FORZAR SALUDO INICIAL (Elena habla primero)
+    // 2. Saludo Proactivo Inmediato
     oaWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: "Introduce yourself immediately: 'Hi! I'm Elena from Domotik Solutions. We specialize in Smart Home and Business Security. How can I help you today?'"
+        instructions: "Introduce yourself immediately with the official pitch."
       }
     }));
   });
@@ -52,7 +55,6 @@ wss.on("connection", (twilioWs) => {
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
 
-    // Manejo de Interrupción
     if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
       twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       oaWs.send(JSON.stringify({ type: "response.cancel" }));
@@ -66,16 +68,13 @@ wss.on("connection", (twilioWs) => {
       const text = evt.transcript.toLowerCase();
       fullTranscript.push(`Cliente: ${evt.transcript}`);
       
-      // LOGICA DE CIERRE URGENTE
-      const despedidas = ["bye", "goodbye", "adiós", "adios", "nos vemos", "thank you", "thanks"];
-      if (despedidas.some(palabra => text.includes(palabra))) {
-        console.log("Terminando llamada por despedida...");
+      // Cierre fulminante por palabras clave
+      const despedidas = ["bye", "goodbye", "adiós", "adios", "gracias", "thank you"];
+      if (despedidas.some(p => text.includes(p))) {
         setTimeout(() => {
-          if (streamSid) {
-            client.calls(streamSid).update({ status: 'completed' }).catch(() => {});
-          }
+          if (streamSid) client.calls(streamSid).update({ status: 'completed' }).catch(() => {});
           twilioWs.close();
-        }, 1500); // Pequeño margen para que Elena diga "Goodbye"
+        }, 1800);
       }
     }
 
@@ -95,19 +94,43 @@ wss.on("connection", (twilioWs) => {
   twilioWs.on("close", async () => {
     if (fullTranscript.length > 2) {
       const chat = fullTranscript.join('\n');
-      const phone = chat.match(/(\d[\s-]?){7,12}/g)?.pop()?.replace(/\s/g, '') || "❌ No capturado";
-      const nameMatch = chat.match(/Cliente: (?:Hi, I'm|I am|My name is|Soy|Me llamo) ([\w\s]+)/i);
-      const name = nameMatch ? nameMatch[1].trim() : "Ver chat";
 
-      await client.messages.create({
-        body: `📋 *NUEVA ORDEN - DOMOTIK*\n👤 NOMBRE: ${name}\n📞 TEL: ${phone}\n\n📝 CHAT:\n${chat.slice(-600)}`,
-        from: TWILIO_WHATSAPP, to: MI_WHATSAPP
-      }).catch(console.error);
+      // --- MOTOR DE EXTRACCIÓN PUNTUAL ---
+      
+      // 1. Teléfono: Busca cualquier serie de 7 a 12 números
+      const phoneMatch = chat.match(/(\d[\s-]?){7,12}/g);
+      const phone = phoneMatch ? phoneMatch[phoneMatch.length - 1].replace(/\s|-/g, '') : "⚠️ NO DETECTADO";
+
+      // 2. Nombre: Busca después de frases de presentación comunes
+      const nameMatch = chat.match(/Cliente: (?:hi|hello|this is|my name is|i am|soy|me llamo|habla) ([\w\s]+)/i);
+      const name = nameMatch ? nameMatch[1].split('\n')[0].trim() : "Revisar chat";
+
+      // 3. Dirección: Busca patrones de numeración + calle (incluyendo español)
+      const addressMatch = chat.match(/(?:\d+\s+[\w\s]+(?:street|st|ave|avenue|dr|drive|rd|road|lane|ln|blvd|calle|avenida|casa|apt))/i);
+      const address = addressMatch ? addressMatch[0] : "Revisar chat";
+
+      // --- ENVÍO DE WHATSAPP ---
+      try {
+        await client.messages.create({
+          body: `🚀 *NUEVA ORDEN TÉCNICA*\n\n` +
+                `👤 *NOMBRE:* ${name.toUpperCase()}\n` +
+                `📞 *TELÉFONO:* ${phone}\n` +
+                `📍 *DIRECCIÓN:* ${address}\n\n` +
+                `--------------------------\n` +
+                `📝 *TRANSCRIPCIÓN RESUMIDA:*\n${chat.slice(-800)}`,
+          from: TWILIO_WHATSAPP, 
+          to: MI_WHATSAPP
+        });
+        console.log("✅ Reporte puntual enviado.");
+      } catch (e) {
+        console.error("❌ Error enviando WhatsApp:", e.message);
+      }
     }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
 });
 
+// Endpoint para Twilio
 app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`
     <Response>
@@ -118,4 +141,4 @@ app.post("/twilio/voice", (req, res) => {
   `);
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Elena v30.0 Proactive Active`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 v31.0 Dispatcher Ready on Port ${PORT}`));
