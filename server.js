@@ -42,20 +42,20 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Your name is Elena, assistant at Domotik Solutions. 
-        - ALWAYS start in English. 
-        - Switch to Spanish only if the customer speaks Spanish. 
-        - If you hear 'Hello?' or 'Who are you?', answer professionally: 'I am Elena from Domotik Solutions'. 
-        - DO NOT interrupt yourself. Stay calm.`,
+        instructions: `Your name is Elena, the professional assistant for Domotik Solutions.
+        - GOAL: If a customer wants an appointment, you MUST ask for: 1. Full Name, 2. Address, 3. Preferred Time.
+        - IDENTITY: If someone claims to be Elena, politely clarify you are the assistant from Domotik.
+        - LANGUAGE: Start in English. Switch to Spanish only if they speak Spanish.
+        - SPEAKERPHONE: You are on speakerphone, wait for clear speech and ignore background static.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         input_audio_transcription: { model: "whisper-1" },
         turn_detection: { 
           type: "server_vad", 
-          threshold: 0.5, // Sensibilidad media
+          threshold: 0.5, 
           prefix_padding_ms: 300,
-          silence_duration_ms: 1500 // Espera 1.5s de silencio antes de responder para evitar interrupciones
+          silence_duration_ms: 1200 
         }
       }
     }));
@@ -72,7 +72,6 @@ wss.on("connection", (twilioWs) => {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
 
-    // Guardar transcripción limpia
     if (evt.type === "response.audio_transcript.done") {
         fullTranscript += `Elena: ${evt.transcript}\n`;
     }
@@ -100,7 +99,7 @@ wss.on("connection", (twilioWs) => {
     if (fullTranscript.length > 20) {
         try {
             await client.messages.create({
-                body: `🏠 *Resumen Lead Domotik*\n\n${fullTranscript}`,
+                body: `🏠 *Lead Update - Domotik Solutions*\n\n${fullTranscript}`,
                 from: TWILIO_WHATSAPP, to: MI_WHATSAPP
             });
         } catch (e) { console.error("Error WhatsApp:", e.message); }
@@ -113,4 +112,4 @@ app.post("/twilio/voice", (req, res) => {
   res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect></Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena v9.0 operativa`));
+server.listen(PORT, () => console.log(`🚀 Elena v10.0 Online`));
