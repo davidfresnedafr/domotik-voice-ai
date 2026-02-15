@@ -31,7 +31,7 @@ wss.on("connection", (twilioWs) => {
         type: "response.create",
         response: { 
           modalities: ["audio", "text"], 
-          instructions: "Greeting: 'Thanks for calling Domotik Solutions. This is Elena. How can I help you today?' (Keep it short!)" 
+          instructions: "Short Greeting: 'Domotik Solutions, Elena speaking. How can I help?'" 
         }
       }));
     }
@@ -42,19 +42,19 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Your name is Elena from Domotik Solutions. 
-        - BE VERY BRIEF. Do not explain services unless asked.
-        - MISSION: Get the Service needed, Address, and Date/Time for the visit.
-        - INTERRUPTION: If the user speaks, stop talking immediately.
-        - LANGUAGE: English primarily. Spanish only if they speak it.`,
+        instructions: `You are Elena. BE EXTREMELY BRIEF.
+        1. Ask for the service needed.
+        2. Ask for the address.
+        3. Ask for the date and time.
+        STOP TALKING immediately if the user speaks. Do not use filler phrases like 'I understand' or 'Sure'.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         turn_detection: { 
           type: "server_vad", 
-          threshold: 0.5, 
-          prefix_padding_ms: 200,
-          silence_duration_ms: 800 // Respuesta más rápida
+          threshold: 0.4, // Más sensible para detectar interrupciones rápido
+          prefix_padding_ms: 100,
+          silence_duration_ms: 600 // Reacción casi instantánea
         }
       }
     }));
@@ -63,12 +63,15 @@ wss.on("connection", (twilioWs) => {
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
 
-    // SI EL USUARIO HABLA, MANDAMOS SEÑAL DE "CLEAR" A TWILIO PARA QUE ELENA SE CALLE
+    // INTERRUPCIÓN CRÍTICA (BARGE-IN)
     if (evt.type === "input_audio_buffer.speech_started") {
+      console.log("🤫 Cliente hablando: Callando a Elena...");
       if (streamSid) {
+        // Detiene el audio en Twilio inmediatamente
         twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
-        oaWs.send(JSON.stringify({ type: "response.cancel" }));
       }
+      // Detiene la generación en OpenAI
+      oaWs.send(JSON.stringify({ type: "response.cancel" }));
     }
 
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
@@ -76,9 +79,11 @@ wss.on("connection", (twilioWs) => {
     }
 
     if (evt.type === "response.audio_transcript.done") { fullTranscript += `E: ${evt.transcript}\n`; }
-    if (evt.type === "conversation.item.input_audio_transcription.completed") { fullTranscript += `C: ${evt.transcript}\n`; }
+    if (evt.type === "conversation.item.input_audio_transcription.completed") { 
+      if (evt.transcript.trim().length > 2) fullTranscript += `C: ${evt.transcript}\n`; 
+    }
     
-    if (evt.type === "session.updated") { setTimeout(sendGreeting, 1500); }
+    if (evt.type === "session.updated") { setTimeout(sendGreeting, 1200); }
   });
 
   twilioWs.on("message", (raw) => {
@@ -90,11 +95,17 @@ wss.on("connection", (twilioWs) => {
   });
 
   twilioWs.on("close", async () => {
-    if (fullTranscript.length > 10) {
+    if (fullTranscript.length > 5) {
+      // FILTRO DE DATOS: Solo enviamos lo importante para evitar saturación de WhatsApp
+      const lines = fullTranscript.split('\n');
+      const filteredInfo = lines.filter(l => 
+        /\d/.test(l) || l.toLowerCase().includes("street") || 
+        l.toLowerCase().includes("ave") || l.toLowerCase().includes("appointment")
+      ).join('\n');
+
       try {
-        // SOLICITAMOS RESUMEN FINAL A OPENAI ANTES DE CERRAR (OPCIONAL) O FILTRAMOS AQUÍ:
         await client.messages.create({
-          body: `🏠 *DOMOTIK LEAD*\n\n${fullTranscript.slice(-600)}`, // Solo mandamos los últimos 600 caracteres para evitar error de límite
+          body: `🏠 *DOMOTIK DATA*\n\n${filteredInfo || "Ver chat completo: \n" + fullTranscript.slice(-400)}`,
           from: TWILIO_WHATSAPP, to: MI_WHATSAPP
         });
       } catch (e) { console.error("Error SMS:", e.message); }
@@ -104,7 +115,14 @@ wss.on("connection", (twilioWs) => {
 });
 
 app.post("/twilio/voice", (req, res) => {
-  res.type("text/xml").send(`<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect></Response>`);
+  res.type("text/xml").send(`
+    <Response>
+      <Connect>
+        <Stream url="wss://${PUBLIC_BASE_URL}/media-stream">
+          <Parameter name="inboundTracks" value="both_tracks" />
+        </Stream>
+      </Connect>
+    </Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena v14.0 Ready`));
+server.listen(PORT, () => console.log(`🚀 Elena v15.0 Sniper Ready`));
