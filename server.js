@@ -4,12 +4,16 @@ import WebSocket, { WebSocketServer } from "ws";
 import twilio from "twilio";
 
 const PORT = process.env.PORT || 10000;
-const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 
-// ✅ PONLO EN ENV (Render): domotik-voice-ai.onrender.com
+const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").trim();
 
+// ✅ IMPORTANT: set this in Render env
+// Recommended to avoid noise issues:
+const REALTIME_MODEL = (process.env.REALTIME_MODEL || "gpt-4o-realtime-preview-2024-12-17").trim();
+
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
 const MI_WHATSAPP = "whatsapp:+15617141075";
 const TWILIO_WHATSAPP = "whatsapp:+14155238886";
 
@@ -20,7 +24,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/media-stream" });
 
 /* -----------------------
-   Helpers (extractors)
+   Helpers
 ------------------------ */
 function clean(s = "") {
   return (s || "").trim();
@@ -54,16 +58,19 @@ function extractAddress(text = "") {
   if (street) return clean(street[0]);
 
   // place fallback: "Parker Plaza in Hallandale"
-  const place = text.match(/\b([A-Za-z][A-Za-z\s]{2,})\s+(plaza|tower|building|office)\b.*\b(in|at)\s+([A-Za-z\s]{3,})\b/i);
+  const place = text.match(
+    /\b([A-Za-z][A-Za-z\s]{2,})\s+(plaza|tower|building|office)\b.*\b(in|at)\s+([A-Za-z\s]{3,})\b/i
+  );
   if (place) return clean(place[0]);
 
   return "";
 }
 
 function extractCallback(text = "") {
-  // simple patterns like "tomorrow morning", "today after 5", "at 3pm"
-  const m = text.match(/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b.*\b(\d{1,2}(:\d{2})?\s?(am|pm)?)\b/i)
-        || text.match(/\b(after\s+\d{1,2}\s?(am|pm)|morning|afternoon|evening|anytime after \d{1,2})\b/i);
+  const t = text || "";
+  const m =
+    t.match(/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b.*\b(\d{1,2}(:\d{2})?\s?(am|pm)?)\b/i) ||
+    t.match(/\b(after\s+\d{1,2}\s?(am|pm)|morning|afternoon|evening|anytime after \d{1,2})\b/i);
   return m ? clean(m[0]) : "";
 }
 
@@ -78,17 +85,22 @@ wss.on("connection", (twilioWs) => {
   let greeted = false;
 
   let fullTranscript = ""; // texto completo para resumen final
-  const lead = { name: "", phone: "", address: "", issue: "", callback_time: "" };
 
-  const oaWs = new WebSocket(
-    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
-    {
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "OpenAI-Beta": "realtime=v1",
-      },
-    }
-  );
+  // Datos estructurados del lead
+  const lead = {
+    name: "",
+    phone: "",
+    address: "",
+    issue: "",
+    callback_time: "",
+  };
+
+  const oaWs = new WebSocket(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(REALTIME_MODEL)}`, {
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      "OpenAI-Beta": "realtime=v1",
+    },
+  });
 
   const endStream = () => {
     if (ended) return;
@@ -106,7 +118,7 @@ wss.on("connection", (twilioWs) => {
   }
 
   function requestJsonExtraction() {
-    // Usamos Realtime para pedir un JSON final con los campos
+    // Pide a OpenAI un JSON final con campos
     return new Promise((resolve) => {
       let done = false;
 
@@ -131,7 +143,7 @@ wss.on("connection", (twilioWs) => {
 Extract a JSON object from this transcript with:
 {name, phone, address, issue, callback_time}
 If unknown use "".
-Return ONLY valid JSON (no extra words).
+Return ONLY valid JSON.
 
 TRANSCRIPT:
 ${fullTranscript.slice(-4500)}
@@ -144,7 +156,7 @@ ${fullTranscript.slice(-4500)}
           oaWs.off("message", handler);
           resolve("");
         }
-      }, 6000);
+      }, 6500);
     });
   }
 
@@ -166,6 +178,7 @@ ${fullTranscript.slice(-4500)}
   oaWs.on("open", () => {
     console.log("🟢 OpenAI Realtime listo");
 
+    // ✅ ESTA CONFIG ES LA CLAVE para Twilio (evitar ruido)
     oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
@@ -173,11 +186,15 @@ ${fullTranscript.slice(-4500)}
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
+
+        // ✅ mono
+        audio_channels: 1,
+
+        // ✅ 1:30 de silencio
         turn_detection: {
           type: "server_vad",
           threshold: 0.5,
           prefix_padding_ms: 200,
-          // ✅ 1 minuto y medio
           silence_duration_ms: 90000
         },
         instructions: `
@@ -196,7 +213,12 @@ RULES:
   });
 
   oaWs.on("message", (raw) => {
-    const evt = JSON.parse(raw.toString());
+    let evt;
+    try {
+      evt = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
 
     // ✅ Si el usuario habla, cortamos audio del bot inmediatamente
     if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
@@ -219,14 +241,13 @@ RULES:
       if (t) fullTranscript += `Elena: ${t}\n`;
     }
 
-    // ✅ Transcript del CLIENTE (aquí capturamos datos)
+    // ✅ Transcript del CLIENTE (captura de datos)
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
       const t = clean(evt.transcript);
       if (t) fullTranscript += `Cliente: ${t}\n`;
 
-      // Detectar bye/adios y colgar
+      // Colgar si dice bye/adios
       if (saidBye(t)) {
-        // opcional: Elena se despide breve
         if (oaWs.readyState === WebSocket.OPEN) {
           oaWs.send(JSON.stringify({
             type: "response.create",
@@ -237,7 +258,7 @@ RULES:
         return;
       }
 
-      // Extraer campos (regex)
+      // Extraer campos
       if (!lead.phone) {
         const p = extractPhone(t);
         if (p) lead.phone = p;
@@ -255,7 +276,7 @@ RULES:
         if (c) lead.callback_time = c;
       }
 
-      // Issue: guarda la primera frase “útil” si no existe aún
+      // Issue: primera frase útil
       if (!lead.issue && t.length >= 10) {
         lead.issue = t;
       }
@@ -263,11 +284,16 @@ RULES:
   });
 
   twilioWs.on("message", (raw) => {
-    const msg = JSON.parse(raw.toString());
+    let msg;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
 
     if (msg.event === "start") {
       streamSid = msg.start.streamSid;
-      // ✅ Saludo 1 vez cuando Twilio ya está listo
+      // Saludo 1 vez cuando Twilio está listo
       setTimeout(sendGreetingOnce, 600);
     }
 
@@ -281,19 +307,17 @@ RULES:
 
   twilioWs.on("close", async () => {
     try {
-      // ✅ Completar faltantes con extracción JSON final
+      // Completar faltantes con JSON final
       let jsonText = "";
       if (oaWs.readyState === WebSocket.OPEN && fullTranscript.length > 30) {
         jsonText = await requestJsonExtraction();
       }
-
       if (jsonText) {
         try {
           mergeLead(JSON.parse(jsonText));
         } catch {}
       }
 
-      // ✅ WhatsApp con datos (no solo transcript)
       const body =
         `🏠 *ORDEN DOMOTIK SOLUTIONS*\n\n` +
         `👤 *Nombre:* ${lead.name || "Not captured"}\n` +
@@ -335,5 +359,5 @@ app.post("/twilio/voice", (req, res) => {
 
 // ✅ Render fix
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Elena ONLINE on Port ${PORT}`);
+  console.log(`🚀 Elena ONLINE on Port ${PORT} | model=${REALTIME_MODEL}`);
 });
