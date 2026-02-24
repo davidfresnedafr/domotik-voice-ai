@@ -33,29 +33,31 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Your name is Elena from DOMOTIK SOLUTIONS LLC.
-        - START ALWAYS IN ENGLISH: "Thank you for calling Domotik Solutions LLC. I'm Elena, how can I help you today?"
-        - BILINGUAL: Switch to Spanish if they do.
-        - GOAL: You MUST collect Name, Phone, Address, and THE SPECIFIC SERVICE OR PRODUCT THEY NEED (e.g., camera installation, security system).
-        - TERMINATION: When the user says 'bye', 'adios', or 'gracias', say a polite goodbye and then the call will end.`,
-        voice: "shimmer",
+        instructions: `Your name is Elena from Domotik Solutions. 
+        PITCH: "Hi! I'm Elena from Domotik Solutions. We specialize in Smart Home and Business Security for Residential and Commercial clients. How can I help you today?"
+        GOAL: You MUST collect Name, Phone number, Service Address, and a detailed description of WHAT THE CLIENT NEEDS (e.g., camera installation, security system).
+        TERMINATION: If the user says 'Bye' or 'Thank you', say goodbye politely and the call will end.`,
+        voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
-        turn_detection: { type: "server_vad", threshold: 0.8, silence_duration_ms: 1000 }
+        turn_detection: { type: "server_vad", threshold: 0.5, silence_duration_ms: 800 }
       }
     }));
-    
-    setTimeout(() => {
-      oaWs.send(JSON.stringify({
-        type: "response.create",
-        response: { instructions: "Greet the customer in English now." }
-      }));
-    }, 600);
+
+    oaWs.send(JSON.stringify({
+      type: "response.create",
+      response: { instructions: "Greet the customer immediately with the pitch." }
+    }));
   });
 
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
-    if (evt.type === "response.audio.delta" && streamSid) {
+
+    if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
+      twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
+      oaWs.send(JSON.stringify({ type: "response.cancel" }));
+    }
+    if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
 
@@ -63,9 +65,9 @@ wss.on("connection", (twilioWs) => {
       const text = (evt.transcript || "").toLowerCase();
       if (text.trim()) fullTranscript.push(text);
       
-      const keywords = ["bye", "thank you", "adios", "adiós", "gracias"];
+      const keywords = ["bye", "adios", "adiós", "gracias", "thank you"];
       if (keywords.some(word => text.includes(word))) {
-        // Aumentamos el tiempo a 4 segundos para que Elena termine de despedirse
+        // AUMENTAMOS EL TIEMPO A 4 SEGUNDOS PARA QUE DIGA ADIÓS ANTES DE COLGAR
         setTimeout(async () => {
           if (callSid) {
             try { 
@@ -100,27 +102,28 @@ wss.on("connection", (twilioWs) => {
           body: JSON.stringify({
             model: "gpt-4o-mini",
             messages: [
-              { role: "system", content: `Extract customer info. 
-                Fields: name, phone, address, and service_needed (VERY IMPORTANT: what does the client want to install or fix?).
-                Use ${callerNumber} if phone is missing. Format: JSON.` },
+              { role: "system", content: "Extract customer Name, Phone, Address, and a detailed 'Service_Request' (what the client needs, like camera installation). Use " + callerNumber + " if phone is missing. Format as JSON: { 'name': '', 'phone': '', 'address': '', 'request': '' }" },
               { role: "user", content: chat }
             ],
             response_format: { type: "json_object" }
           })
         });
+
         const jsonRes = await response.json();
         const info = JSON.parse(jsonRes.choices[0].message.content);
-        
+
         await client.messages.create({
-          body: `🚀 *ORDEN TÉCNICA DOMOTIK LLC*\n\n` +
-                `👤 *NOMBRE:* ${info.name || 'No capturado'}\n` +
-                `📞 *TEL:* ${info.phone || callerNumber}\n` +
-                `📍 *DIR:* ${info.address || 'No capturada'}\n` +
-                `🛠️ *SERVICIO:* ${info.service_needed || 'No especificado'}\n\n` +
-                `📝 *HISTORIAL RESUMIDO:*\n${chat.slice(-300)}`,
+          body: `🚀 *ORDEN TÉCNICA DOMOTIK*\n\n` +
+                `👤 *NOMBRE:* ${info.name.toUpperCase()}\n` +
+                `📞 *TEL:* ${info.phone}\n` +
+                `📍 *DIR:* ${info.address}\n` +
+                `🛠️ *NECESITA:* ${info.request}\n\n` +
+                `📝 *HISTORIAL:*\n${chat.slice(-500)}`,
           from: TWILIO_WHATSAPP, to: MI_WHATSAPP
         });
-      } catch (err) { console.error("Error reporte:", err); }
+      } catch (err) {
+        console.error("❌ Error enviando reporte:", err);
+      }
     }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
@@ -139,4 +142,4 @@ app.post("/twilio/voice", (req, res) => {
     </Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena Activa para Domotik Solutions`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Servidor Domotik Activo en Puerto ${PORT}`));
