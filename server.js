@@ -28,30 +28,32 @@ wss.on("connection", (twilioWs) => {
   });
 
   oaWs.on("open", () => {
-    // 1. INSTRUCCIONES ULTRA-ESTRICTAS
     oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
         instructions: `Your name is Elena, an elite representative for DOMOTIK SOLUTIONS LLC.
-        - ALWAYS START IN ENGLISH: "Thank you for calling Domotik Solutions LLC, your experts in smart home and security. I'm Elena, how can I help you today?"
-        - BILINGUAL: If the user speaks Spanish, switch to professional Spanish.
-        - DATA: Collect Name, Phone, and Address. 
-        - HANG UP: When the user says 'bye', 'thank you', 'adios', or 'gracias', say a brief professional goodbye and YOU MUST STOP TALKING immediately.`,
+        - START ALWAYS IN ENGLISH: "Thank you for calling Domotik Solutions LLC. I'm Elena, how can I help you today?"
+        - BILINGUAL: If they speak Spanish, switch to professional Spanish.
+        - GOAL: Collect Name, Phone, and Address. 
+        - TERMINATION: If the customer says 'bye', 'thank you', 'adios', or 'gracias', say 'Have a great day' and STOP.`,
         voice: "shimmer",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
-        turn_detection: { type: "server_vad", threshold: 0.5 }
+        turn_detection: { 
+          type: "server_vad", 
+          threshold: 0.8, // SUBIDO PARA IGNORAR RUIDO DE MOUSE
+          silence_duration_ms: 1000 
+        }
       }
     }));
 
-    // 2. SALUDO INMEDIATO FORZADO
     setTimeout(() => {
       oaWs.send(JSON.stringify({
         type: "response.create",
-        response: { instructions: "Introduce yourself as Elena from Domotik Solutions LLC in English right now." }
+        response: { instructions: "Greet the customer in English as Elena from Domotik Solutions LLC." }
       }));
-    }, 500);
+    }, 600);
   });
 
   oaWs.on("message", (raw) => {
@@ -61,21 +63,23 @@ wss.on("connection", (twilioWs) => {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
 
-    // 3. LÓGICA DE CIERRE AUTOMÁTICO (TRIGGER)
+    // LÓGICA DE DETECCIÓN DE CIERRE
     if (evt.type === "conversation.item.input_audio_transcription.completed" || evt.type === "response.audio_transcript.done") {
       const text = (evt.transcript || "").toLowerCase();
       fullTranscript.push(text);
       
       const keywords = ["bye", "thank you", "adios", "adiós", "gracias", "finalizar"];
       if (keywords.some(word => text.includes(word))) {
-        console.log("🎯 Palabra de cierre detectada. Colgando...");
+        console.log("🎯 Cierre detectado. Colgando llamada...");
         setTimeout(async () => {
           if (streamSid) {
             try {
+              // ESTO OBLIGA A TWILIO A CORTAR
               await client.calls(streamSid).update({ status: 'completed' });
+              console.log("✅ Llamada finalizada por el servidor.");
             } catch (e) { console.error("Error al colgar:", e); }
           }
-        }, 3000); // Espera 3 segundos para que Elena termine de decir adiós
+        }, 2500); // 2.5 segundos para que Elena termine de despedirse
       }
     }
   });
@@ -85,7 +89,6 @@ wss.on("connection", (twilioWs) => {
     if (msg.event === "start") {
       streamSid = msg.start.streamSid;
       callerNumber = msg.start.customParameters?.from || "Unknown";
-      console.log(`📞 Llamada de: ${callerNumber}`);
     }
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
       oaWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: msg.media.payload }));
@@ -93,8 +96,7 @@ wss.on("connection", (twilioWs) => {
   });
 
   twilioWs.on("close", async () => {
-    console.log("🔴 Conexión cerrada. Generando reporte...");
-    if (fullTranscript.length > 5) { // Solo si hubo conversación real
+    if (fullTranscript.length > 5) {
       const chat = fullTranscript.join('\n');
       try {
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -103,7 +105,7 @@ wss.on("connection", (twilioWs) => {
           body: JSON.stringify({
             model: "gpt-4o-mini",
             messages: [
-              { role: "system", content: `Extract Name, Phone, and Address. Use ${callerNumber} if phone is missing. Format: JSON.` },
+              { role: "system", content: `Extract customer info. Phone: ${callerNumber}. JSON format.` },
               { role: "user", content: chat }
             ],
             response_format: { type: "json_object" }
@@ -130,7 +132,7 @@ app.post("/twilio/voice", (req, res) => {
           <Parameter name="from" value="${fromNum}" />
         </Stream>
       </Connect>
-      <Pause length="40"/> 
+      <Pause length="30"/>
     </Response>`);
 });
 
