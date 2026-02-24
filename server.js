@@ -35,7 +35,8 @@ wss.on("connection", (twilioWs) => {
         modalities: ["text", "audio"],
         instructions: `Your name is Elena from Domotik Solutions. 
         PITCH: "Hi! I'm Elena from Domotik Solutions. We specialize in Smart Home and Business Security for Residential and Commercial clients. How can I help you today?"
-        GOAL: You MUST collect Name, Phone number, Service Address, and a detailed description of WHAT THE CLIENT NEEDS (e.g., camera installation, security system).
+        GOAL: You MUST collect Name, Phone number, Service Address, and a detailed description of THE SPECIFIC SERVICE OR PRODUCT THEY NEED (like camera installation, security system).
+        BILINGUAL: If the user speaks Spanish, switch to professional Spanish immediately.
         TERMINATION: If the user says 'Bye' or 'Thank you', say goodbye politely and the call will end.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
@@ -44,9 +45,10 @@ wss.on("connection", (twilioWs) => {
       }
     }));
 
+    // Forzamos el inicio con el PITCH original que funcionó
     oaWs.send(JSON.stringify({
       type: "response.create",
-      response: { instructions: "Greet the customer immediately with the pitch." }
+      response: { instructions: "Greet the customer immediately with your pitch in English." }
     }));
   });
 
@@ -67,12 +69,12 @@ wss.on("connection", (twilioWs) => {
       
       const keywords = ["bye", "adios", "adiós", "gracias", "thank you"];
       if (keywords.some(word => text.includes(word))) {
-        // AUMENTAMOS EL TIEMPO A 4 SEGUNDOS PARA QUE DIGA ADIÓS ANTES DE COLGAR
+        // RETRASO DE 4 SEGUNDOS: Permite que Elena termine de despedirse antes de que Twilio corte
         setTimeout(async () => {
           if (callSid) {
             try { 
               await client.calls(callSid).update({ status: 'completed' }); 
-              console.log("✅ Llamada finalizada tras despedida.");
+              console.log("✅ Llamada finalizada exitosamente.");
             } catch (e) { console.error("Error al colgar:", e.message); }
           }
         }, 4000); 
@@ -84,7 +86,7 @@ wss.on("connection", (twilioWs) => {
     const msg = JSON.parse(raw.toString());
     if (msg.event === "start") {
       streamSid = msg.start.streamSid;
-      callSid = msg.start.callSid; 
+      callSid = msg.start.callSid; // Capturamos el ID correcto para poder colgar
       callerNumber = msg.start.customParameters?.from || "Unknown";
     }
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
@@ -102,7 +104,7 @@ wss.on("connection", (twilioWs) => {
           body: JSON.stringify({
             model: "gpt-4o-mini",
             messages: [
-              { role: "system", content: "Extract customer Name, Phone, Address, and a detailed 'Service_Request' (what the client needs, like camera installation). Use " + callerNumber + " if phone is missing. Format as JSON: { 'name': '', 'phone': '', 'address': '', 'request': '' }" },
+              { role: "system", content: `Extract customer info: Name, Phone, Address, and THE SPECIFIC REQUEST (what they want to install/fix). Use ${callerNumber} if phone is missing. Format: JSON { "name": "", "phone": "", "address": "", "service": "" }.` },
               { role: "user", content: chat }
             ],
             response_format: { type: "json_object" }
@@ -113,17 +115,15 @@ wss.on("connection", (twilioWs) => {
         const info = JSON.parse(jsonRes.choices[0].message.content);
 
         await client.messages.create({
-          body: `🚀 *ORDEN TÉCNICA DOMOTIK*\n\n` +
+          body: `🚀 *ORDEN TÉCNICA DOMOTIK LLC*\n\n` +
                 `👤 *NOMBRE:* ${info.name.toUpperCase()}\n` +
                 `📞 *TEL:* ${info.phone}\n` +
                 `📍 *DIR:* ${info.address}\n` +
-                `🛠️ *NECESITA:* ${info.request}\n\n` +
+                `🛠️ *NECESITA:* ${info.service}\n\n` +
                 `📝 *HISTORIAL:*\n${chat.slice(-500)}`,
           from: TWILIO_WHATSAPP, to: MI_WHATSAPP
         });
-      } catch (err) {
-        console.error("❌ Error enviando reporte:", err);
-      }
+      } catch (err) { console.error("❌ Error en reporte:", err); }
     }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
@@ -142,4 +142,4 @@ app.post("/twilio/voice", (req, res) => {
     </Response>`);
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Servidor Domotik Activo en Puerto ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Elena Activa para Domotik Solutions`));
