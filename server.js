@@ -35,9 +35,9 @@ wss.on("connection", (twilioWs) => {
         modalities: ["text", "audio"],
         instructions: `Your name is Elena from DOMOTIK SOLUTIONS LLC.
         - START ALWAYS IN ENGLISH: "Thank you for calling Domotik Solutions LLC. I'm Elena, how can I help you today?"
-        - BILINGUAL: Switch to Spanish immediately if the caller speaks Spanish.
-        - DATA: Be professional and collect Name, Phone Number, and Service Address.
-        - HANG UP: When you hear 'bye', 'thank you', 'adios', or 'gracias', say a warm goodbye and STOP talking.`,
+        - BILINGUAL: Switch to Spanish if they do.
+        - GOAL: You MUST collect Name, Phone, Address, and THE SPECIFIC SERVICE OR PRODUCT THEY NEED (e.g., camera installation, security system).
+        - TERMINATION: When the user says 'bye', 'adios', or 'gracias', say a polite goodbye and then the call will end.`,
         voice: "shimmer",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
@@ -48,7 +48,7 @@ wss.on("connection", (twilioWs) => {
     setTimeout(() => {
       oaWs.send(JSON.stringify({
         type: "response.create",
-        response: { instructions: "Introduce yourself in English as Elena from Domotik Solutions LLC." }
+        response: { instructions: "Greet the customer in English now." }
       }));
     }, 600);
   });
@@ -65,14 +65,15 @@ wss.on("connection", (twilioWs) => {
       
       const keywords = ["bye", "thank you", "adios", "adiós", "gracias"];
       if (keywords.some(word => text.includes(word))) {
+        // Aumentamos el tiempo a 4 segundos para que Elena termine de despedirse
         setTimeout(async () => {
           if (callSid) {
             try { 
               await client.calls(callSid).update({ status: 'completed' }); 
-              console.log("✅ Llamada finalizada exitosamente.");
+              console.log("✅ Llamada finalizada tras despedida.");
             } catch (e) { console.error("Error al colgar:", e.message); }
           }
-        }, 2000);
+        }, 4000); 
       }
     }
   });
@@ -81,9 +82,8 @@ wss.on("connection", (twilioWs) => {
     const msg = JSON.parse(raw.toString());
     if (msg.event === "start") {
       streamSid = msg.start.streamSid;
-      callSid = msg.start.callSid; // Crítico para evitar el error de invalid CallSid
+      callSid = msg.start.callSid; 
       callerNumber = msg.start.customParameters?.from || "Unknown";
-      console.log(`📞 Conectado: ${callerNumber}`);
     }
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
       oaWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: msg.media.payload }));
@@ -100,7 +100,9 @@ wss.on("connection", (twilioWs) => {
           body: JSON.stringify({
             model: "gpt-4o-mini",
             messages: [
-              { role: "system", content: `Extract customer info. Use ${callerNumber} if phone is missing. Format: JSON.` },
+              { role: "system", content: `Extract customer info. 
+                Fields: name, phone, address, and service_needed (VERY IMPORTANT: what does the client want to install or fix?).
+                Use ${callerNumber} if phone is missing. Format: JSON.` },
               { role: "user", content: chat }
             ],
             response_format: { type: "json_object" }
@@ -110,10 +112,15 @@ wss.on("connection", (twilioWs) => {
         const info = JSON.parse(jsonRes.choices[0].message.content);
         
         await client.messages.create({
-          body: `🚀 *ORDEN TÉCNICA DOMOTIK LLC*\n👤: ${info.name || 'No capturado'}\n📞: ${info.phone || callerNumber}\n📍: ${info.address || 'No capturada'}\n\n📝 HISTORIAL:\n${chat.slice(-400)}`,
+          body: `🚀 *ORDEN TÉCNICA DOMOTIK LLC*\n\n` +
+                `👤 *NOMBRE:* ${info.name || 'No capturado'}\n` +
+                `📞 *TEL:* ${info.phone || callerNumber}\n` +
+                `📍 *DIR:* ${info.address || 'No capturada'}\n` +
+                `🛠️ *SERVICIO:* ${info.service_needed || 'No especificado'}\n\n` +
+                `📝 *HISTORIAL RESUMIDO:*\n${chat.slice(-300)}`,
           from: TWILIO_WHATSAPP, to: MI_WHATSAPP
         });
-      } catch (err) { console.error("Error en reporte:", err); }
+      } catch (err) { console.error("Error reporte:", err); }
     }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
