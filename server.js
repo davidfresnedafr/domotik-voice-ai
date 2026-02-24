@@ -12,7 +12,6 @@ const MI_WHATSAPP = "whatsapp:+15617141075";
 const TWILIO_WHATSAPP = "whatsapp:+14155238886"; 
 
 const app = express();
-// Configuración vital para recibir datos de Twilio
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -22,44 +21,62 @@ const wss = new WebSocketServer({ server, path: "/media-stream" });
 wss.on("connection", (twilioWs) => {
   let streamSid = null;
   let fullTranscript = [];
-  let callerNumber = "Not provided";
+  let callerNumber = "Unknown";
 
   const oaWs = new WebSocket("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "OpenAI-Beta": "realtime=v1" }
   });
 
   oaWs.on("open", () => {
+    // 1. INSTRUCCIONES ULTRA-ESTRICTAS
     oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Your name is Elena, representing DOMOTIK SOLUTIONS LLC. 
-        1. START ALWAYS IN ENGLISH: "Thank you for calling Domotik Solutions LLC. My name is Elena, how can I help you today?"
-        2. BE BILINGUAL: Switch to Spanish if the customer does.
-        3. CAPTURE: Name, Phone, and Address.`,
+        instructions: `Your name is Elena, an elite representative for DOMOTIK SOLUTIONS LLC.
+        - ALWAYS START IN ENGLISH: "Thank you for calling Domotik Solutions LLC, your experts in smart home and security. I'm Elena, how can I help you today?"
+        - BILINGUAL: If the user speaks Spanish, switch to professional Spanish.
+        - DATA: Collect Name, Phone, and Address. 
+        - HANG UP: When the user says 'bye', 'thank you', 'adios', or 'gracias', say a brief professional goodbye and YOU MUST STOP TALKING immediately.`,
         voice: "shimmer",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
-        turn_detection: { type: "server_vad", threshold: 0.6 }
+        turn_detection: { type: "server_vad", threshold: 0.5 }
       }
     }));
-    
-    oaWs.send(JSON.stringify({
-      type: "response.create",
-      response: { instructions: "Greet the customer now in English." }
-    }));
+
+    // 2. SALUDO INMEDIATO FORZADO
+    setTimeout(() => {
+      oaWs.send(JSON.stringify({
+        type: "response.create",
+        response: { instructions: "Introduce yourself as Elena from Domotik Solutions LLC in English right now." }
+      }));
+    }, 500);
   });
 
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
+    
     if (evt.type === "response.audio.delta" && streamSid) {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
-    if (evt.type === "conversation.item.input_audio_transcription.completed") {
-      fullTranscript.push(`Cliente: ${evt.transcript}`);
-    }
-    if (evt.type === "response.audio_transcript.done") {
-      fullTranscript.push(`Elena: ${evt.transcript}`);
+
+    // 3. LÓGICA DE CIERRE AUTOMÁTICO (TRIGGER)
+    if (evt.type === "conversation.item.input_audio_transcription.completed" || evt.type === "response.audio_transcript.done") {
+      const text = (evt.transcript || "").toLowerCase();
+      fullTranscript.push(text);
+      
+      const keywords = ["bye", "thank you", "adios", "adiós", "gracias", "finalizar"];
+      if (keywords.some(word => text.includes(word))) {
+        console.log("🎯 Palabra de cierre detectada. Colgando...");
+        setTimeout(async () => {
+          if (streamSid) {
+            try {
+              await client.calls(streamSid).update({ status: 'completed' });
+            } catch (e) { console.error("Error al colgar:", e); }
+          }
+        }, 3000); // Espera 3 segundos para que Elena termine de decir adiós
+      }
     }
   });
 
@@ -67,8 +84,8 @@ wss.on("connection", (twilioWs) => {
     const msg = JSON.parse(raw.toString());
     if (msg.event === "start") {
       streamSid = msg.start.streamSid;
-      // Capturamos el número que pasamos desde el endpoint /voice
       callerNumber = msg.start.customParameters?.from || "Unknown";
+      console.log(`📞 Llamada de: ${callerNumber}`);
     }
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
       oaWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: msg.media.payload }));
@@ -76,7 +93,8 @@ wss.on("connection", (twilioWs) => {
   });
 
   twilioWs.on("close", async () => {
-    if (fullTranscript.length > 0) {
+    console.log("🔴 Conexión cerrada. Generando reporte...");
+    if (fullTranscript.length > 5) { // Solo si hubo conversación real
       const chat = fullTranscript.join('\n');
       try {
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -85,7 +103,7 @@ wss.on("connection", (twilioWs) => {
           body: JSON.stringify({
             model: "gpt-4o-mini",
             messages: [
-              { role: "system", content: `Extract customer info. Use ${callerNumber} if phone is missing.` },
+              { role: "system", content: `Extract Name, Phone, and Address. Use ${callerNumber} if phone is missing. Format: JSON.` },
               { role: "user", content: chat }
             ],
             response_format: { type: "json_object" }
@@ -95,7 +113,7 @@ wss.on("connection", (twilioWs) => {
         const info = JSON.parse(jsonRes.choices[0].message.content);
         
         await client.messages.create({
-          body: `🚀 *NUEVA ORDEN DOMOTIK*\n👤: ${info.name}\n📞: ${info.phone}\n📍: ${info.address}`,
+          body: `🚀 *NUEVA ORDEN DOMOTIK LLC*\n👤: ${info.name}\n📞: ${info.phone}\n📍: ${info.address}`,
           from: TWILIO_WHATSAPP, to: MI_WHATSAPP
         });
       } catch (err) { console.error("Error reporte:", err); }
@@ -104,16 +122,16 @@ wss.on("connection", (twilioWs) => {
 });
 
 app.post("/twilio/voice", (req, res) => {
-  // Ahora req.body.From funcionará correctamente gracias a app.use(express.urlencoded)
-  const fromNumber = req.body.From || 'Unknown';
+  const fromNum = req.body.From || 'Unknown';
   res.type("text/xml").send(`
     <Response>
       <Connect>
         <Stream url="wss://${PUBLIC_BASE_URL}/media-stream">
-          <Parameter name="from" value="${fromNumber}" />
+          <Parameter name="from" value="${fromNum}" />
         </Stream>
       </Connect>
+      <Pause length="40"/> 
     </Response>`);
 });
 
-server.listen(PORT, () => console.log(`🚀 Elena Activa en Puerto ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Elena Activa para Domotik Solutions`));
