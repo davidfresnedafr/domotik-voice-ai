@@ -71,10 +71,10 @@ RULES:
 - When customer says goodbye → short farewell → [HANGUP].`,
 
         voice: "shimmer",
-        speed: 1.2,
+        speed: 1.15,
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
-        max_response_output_tokens: 200,
+        max_response_output_tokens: 500,
 
         // ✅ Transcription explicitly enabled — required for transcript events
         input_audio_transcription: {
@@ -85,9 +85,8 @@ RULES:
         turn_detection: {
           type: "server_vad",
           threshold: 0.9,
-          silence_duration_ms: 1000,
+          silence_duration_ms: 1500, // more patience before responding
           prefix_padding_ms: 500,
-          interrupt_response: false, // Elena keeps talking through background noise
         },
       },
     }));
@@ -122,8 +121,11 @@ RULES:
 
       const t = text.toLowerCase();
       const goodbyes = ["bye", "goodbye", "good bye", "adios", "adiós",
-                        "hasta luego", "chao", "chau", "nos vemos", "take care"];
-      if (goodbyes.some(w => t.includes(w)) && !hangupScheduled) {
+                        "hasta luego", "chao", "chau", "nos vemos", "take care",
+                        "have a good day", "have a great day", "talk to you later"];
+      // Only trigger if goodbye word is near end of sentence (not mid-conversation)
+      const endsWithGoodbye = goodbyes.some(w => t.endsWith(w) || t.endsWith(w + ".") || t.endsWith(w + "!"));
+      if (endsWithGoodbye && !hangupScheduled) {
         console.log("👋 Cliente se despidió");
         scheduleHangup(4000);
       }
