@@ -58,6 +58,7 @@ wss.on("connection", (twilioWs, req) => {
         - Do NOT over-explain. Keep responses short and to the point.
         - Never repeat the same phrase twice in a row.
         - NOISY ENVIRONMENT: If you can't understand the customer due to background noise, say naturally: "Disculpe, hay mucho ruido — ¿me puede repetir eso?" or in English: "Sorry, there's a lot of background noise — could you repeat that?" Do NOT guess what they said.
+        - VERY NOISY (can't understand after 2 attempts): Say "Parece que hay demasiado ruido — ¿le puedo llamar en otro momento? Déjeme su nombre y número y le devolvemos la llamada." / "It seems very noisy — can we call you back? Just leave your name and number." Then collect name and phone only, say [HANGUP].
 
         LANGUAGE DETECTION: After your greeting (always in English), listen to the customer. If they speak Spanish, switch immediately to natural Colombian Spanish. If English, stay in English but keep the warm tone.
 
@@ -74,9 +75,9 @@ wss.on("connection", (twilioWs, req) => {
         output_audio_format: "g711_ulaw",
         turn_detection: {
           type: "server_vad",
-          threshold: 0.85,       // ✅ filtro de ruido fuerte — solo activa con voz clara
-          silence_duration_ms: 700, // un poco más de pausa para ambientes ruidosos
-          prefix_padding_ms: 300
+          threshold: 0.95,          // ✅ máximo — solo voz directa al micrófono
+          silence_duration_ms: 1200, // ✅ más pausa — en bar hay ruido constante
+          prefix_padding_ms: 500     // ✅ más padding para no cortar palabras
         }
       }
     }));
@@ -177,7 +178,7 @@ wss.on("connection", (twilioWs, req) => {
 - name
 - phone
 - address
-- service (type of service requested)
+- service: describe in detail exactly as the customer explained it — include specifics like number of cameras, rooms, devices, brands, or issues mentioned. Use the customer's own words, do NOT summarize
 Return JSON: { "name": "", "phone": "", "address": "", "service": "" }
 If a field is missing, use "Not provided".`
             },
