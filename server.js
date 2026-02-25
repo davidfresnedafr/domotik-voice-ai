@@ -175,13 +175,13 @@ STRICT RULES:
             {
               role: "system",
               content: `Extract from this call transcript:
-- name
-- phone
-- address
+- name: full name of the customer
+- phone: phone number mentioned by the customer
+- address: FULL street address including street number, street name, city, and state. Search carefully through the entire transcript — the customer may have given it piece by piece or in passing. Include every detail they mentioned (apartment, unit, zip code if given).
 - service: describe in detail exactly as the customer explained — use their own words, do NOT summarize. Include specifics like number of cameras, rooms, devices, brands, or issues mentioned.
 - appointment: exact day and time the customer requested for the technician visit.
 Return JSON: { "name": "", "phone": "", "address": "", "service": "", "appointment": "" }
-If a field is missing, use "Not provided".`,
+IMPORTANT: For address, piece together ALL location details mentioned anywhere in the conversation. If truly not provided, use "Not provided".`,
             },
             { role: "user", content: chat },
           ],
