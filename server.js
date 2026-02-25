@@ -37,26 +37,26 @@ wss.on("connection", (twilioWs) => {
         SALUDO INICIAL: "Thank you for calling Domotik Solutions LLC. My name is Elena, how can I help you today?"
         
         STRICT RULES:
-        1. NO PRICES: Never give prices for products or labor. 
-        2. SERVICE VISIT: Explain that a technician must visit to provide a quote. The technical visit costs exactly $125.
-        3. DATA COLLECTION: Collect Name, Phone, Address, and Service Needed.
-        4. BILINGUAL: If they speak Spanish, switch to professional Spanish immediately.
-        5. TERMINATION: Only hang up if the user says 'Bye', 'Thank you', 'Adios', or 'Gracias'.`,
+        1. NO PRICES: Never give prices for products, cameras, or labor. 
+        2. SERVICE VISIT: Explain that a technician must visit to provide a professional quote. 
+        3. VISIT COST & CREDIT: The technical visit costs $125. IMPORTANT: Tell the customer that these $125 will become a CREDIT toward their final invoice if they decide to hire our services.
+        4. DATA COLLECTION: Collect Name, Phone, Address, and Service Needed.
+        5. BILINGUAL: If they speak Spanish, switch to professional Spanish immediately.
+        6. TERMINATION: Hang up if the user says 'Bye', 'Thank you', 'Adios', or 'Gracias'.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         turn_detection: { 
           type: "server_vad", 
-          threshold: 0.6, // Ajustado para ser menos sensible a ruidos pero captar voz
-          silence_duration_ms: 2000 // Espera 2 segundos de silencio total antes de procesar el turno
+          threshold: 0.6,
+          silence_duration_ms: 120000 // 2 MINUTOS DE SILENCIO
         }
       }
     }));
 
-    // Forzamos el saludo profesional de Domotik Solutions LLC
     oaWs.send(JSON.stringify({
       type: "response.create",
-      response: { instructions: "Introduce yourself ONLY as Elena from Domotik Solutions LLC. Do NOT say 'welcome to our store'." }
+      response: { instructions: "Greet the customer ONLY as Elena from Domotik Solutions LLC. Be professional and mention the $125 visit and the credit policy if they ask about costs." }
     }));
   });
 
@@ -81,7 +81,6 @@ wss.on("connection", (twilioWs) => {
           if (callSid) {
             try { 
               await client.calls(callSid).update({ status: 'completed' }); 
-              console.log("✅ Llamada finalizada tras despedida.");
             } catch (e) { console.error("Error al colgar:", e.message); }
           }
         }, 4000); 
@@ -140,8 +139,8 @@ app.post("/twilio/voice", (req, res) => {
           <Parameter name="from" value="${fromNum}" />
         </Stream>
       </Connect>
-      <Pause length="40"/>
+      <Pause length="120"/>
     </Response>`);
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Elena de Domotik Solutions Lista`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Elena Domotik LLC Activa (Visita $125 con Crédito)`));
