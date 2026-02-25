@@ -34,7 +34,7 @@ wss.on("connection", (twilioWs) => {
         instructions: `Your name is Elena, the professional AI agent for Domotik Solutions LLC.
 
         GREETING RULE (CRITICAL): Your very first message MUST always be in English, no exceptions:
-        "Thank you for calling Domotik Solutions LLC. My name is Elena, how can I help you today?"
+        "Thank you for calling Domotik Solutions LLC, your trusted home and building automation experts. My name is Elena, how can I help you today?"
 
         LANGUAGE DETECTION: After the greeting, listen to the customer. If they respond in Spanish, switch to professional Spanish for ALL subsequent responses. If English, stay in English.
 
@@ -190,5 +190,3 @@ app.post("/twilio/voice", (req, res) => {
 server.listen(PORT, "0.0.0.0", () =>
   console.log(`🚀 Servidor Activo en Puerto ${PORT}`)
 );
-
-
