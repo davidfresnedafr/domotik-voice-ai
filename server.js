@@ -33,29 +33,30 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Your name is Elena, an AI agent for Domotik Solutions LLC. 
-        PITCH: "Thank you for calling Domotik Solutions LLC. My name is Elena, how can I help you today?"
+        instructions: `Your name is Elena, the professional AI agent for Domotik Solutions LLC. 
+        SALUDO INICIAL: "Thank you for calling Domotik Solutions LLC. My name is Elena, how can I help you today?"
         
         STRICT RULES:
         1. NO PRICES: Never give prices for products or labor. 
         2. SERVICE VISIT: Explain that a technician must visit to provide a quote. The technical visit costs exactly $125.
         3. DATA COLLECTION: Collect Name, Phone, Address, and Service Needed.
-        4. BILINGUAL: If they speak Spanish, switch to professional Spanish.
-        5. TERMINATION: If they say 'Bye', 'Thank you', 'Adios', or 'Gracias', say goodbye politely.`,
+        4. BILINGUAL: If they speak Spanish, switch to professional Spanish immediately.
+        5. TERMINATION: Only hang up if the user says 'Bye', 'Thank you', 'Adios', or 'Gracias'.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         turn_detection: { 
           type: "server_vad", 
-          threshold: 0.8,
-          silence_duration_ms: 120000 // 2 MINUTOS DE SILENCIO PARA COLGAR
+          threshold: 0.6, // Ajustado para ser menos sensible a ruidos pero captar voz
+          silence_duration_ms: 2000 // Espera 2 segundos de silencio total antes de procesar el turno
         }
       }
     }));
 
+    // Forzamos el saludo profesional de Domotik Solutions LLC
     oaWs.send(JSON.stringify({
       type: "response.create",
-      response: { instructions: "Greet the customer immediately with the Domotik Solutions LLC pitch in English." }
+      response: { instructions: "Introduce yourself ONLY as Elena from Domotik Solutions LLC. Do NOT say 'welcome to our store'." }
     }));
   });
 
@@ -70,7 +71,6 @@ wss.on("connection", (twilioWs) => {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
 
-    // CIERRE POR PALABRA CLAVE
     if (evt.type === "conversation.item.input_audio_transcription.completed" || evt.type === "response.audio_transcript.done") {
       const text = (evt.transcript || "").toLowerCase();
       if (text.trim()) fullTranscript.push(text);
@@ -81,16 +81,11 @@ wss.on("connection", (twilioWs) => {
           if (callSid) {
             try { 
               await client.calls(callSid).update({ status: 'completed' }); 
-              console.log("✅ Llamada finalizada por despedida.");
+              console.log("✅ Llamada finalizada tras despedida.");
             } catch (e) { console.error("Error al colgar:", e.message); }
           }
         }, 4000); 
       }
-    }
-
-    // CIERRE AUTOMÁTICO POR SILENCIO (VAD)
-    if (evt.type === "input_audio_buffer.committed" && evt.previous_item_id === null) {
-        // Esta lógica detecta cuando el buffer se cierra por el silencio de 2 min definido arriba
     }
   });
 
@@ -145,8 +140,8 @@ app.post("/twilio/voice", (req, res) => {
           <Parameter name="from" value="${fromNum}" />
         </Stream>
       </Connect>
-      <Pause length="30"/>
+      <Pause length="40"/>
     </Response>`);
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Domotik Solutions LLC - Elena Activa`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Elena de Domotik Solutions Lista`));
