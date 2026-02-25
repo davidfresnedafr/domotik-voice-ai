@@ -291,4 +291,3 @@ app.post("/twilio/voice", (req, res) => {
 server.listen(PORT, "0.0.0.0", () =>
   console.log(`🚀 Domotik Voice AI corriendo en puerto ${PORT}`)
 );
-);
