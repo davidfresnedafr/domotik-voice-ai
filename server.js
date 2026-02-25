@@ -12,13 +12,31 @@ const MI_WHATSAPP = "whatsapp:+15617141075";
 const TWILIO_WHATSAPP = "whatsapp:+14155238886";
 
 const app = express();
+app.use(express.urlencoded({ extended: false })); // ✅ leer body de Twilio
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: "/media-stream" });
 
-wss.on("connection", (twilioWs) => {
+// ✅ WebSocketServer sin path fijo — lo manejamos manualmente para leer query params
+const wss = new WebSocketServer({ noServer: true });
+
+// ✅ Upgrade manual para capturar el query string (?caller=+1...)
+server.on("upgrade", (req, socket, head) => {
+  if (req.url.startsWith("/media-stream")) {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws, req);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
+wss.on("connection", (twilioWs, req) => {
+  // ✅ Extraer caller del query string que pusimos en el TwiML
+  const url = new URL(req.url, `http://localhost`);
+  let callerPhone = url.searchParams.get("caller") || null;
+  console.log(`📱 callerPhone desde URL: ${callerPhone}`);
+
   let streamSid = null;
   let callSid = null;
-  let callerPhone = null; // ✅ Caller ID de Twilio
   let fullTranscript = [];
   let hangupScheduled = false;
 
@@ -31,35 +49,41 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Your name is Elena, the professional AI agent for Domotik Solutions LLC.
+        instructions: `You are Elena, a professional receptionist from Bogotá, Colombia working for Domotik Solutions LLC.
 
-        GREETING RULE (CRITICAL): Your very first message MUST always be in English, no exceptions:
-        "Thank you for calling Domotik Solutions LLC, your trusted home and building automation experts. My name is Elena, how can I help you today?"
+        PERSONALITY & SPEECH STYLE (CRITICAL):
+        - Speak naturally and conversationally, like a real person — NOT like a robot or formal assistant.
+        - Use a warm, friendly Bogotá Colombian tone. Use natural Colombian expressions when appropriate (e.g. "claro que sí", "con mucho gusto", "cómo le parece", "listo").
+        - Speak at a normal, natural pace — not slow, not robotic. Be concise and direct.
+        - Do NOT over-explain. Keep responses short and to the point.
+        - Never repeat the same phrase twice in a row.
 
-        LANGUAGE DETECTION: After the greeting, listen to the customer. If they respond in Spanish, switch to professional Spanish for ALL subsequent responses. If English, stay in English.
+        LANGUAGE DETECTION: After your greeting (always in English), listen to the customer. If they speak Spanish, switch immediately to natural Colombian Spanish. If English, stay in English but keep the warm tone.
 
         STRICT RULES:
         1. NO PRICES: Never give prices for products, cameras, or labor.
         2. SERVICE VISIT: Explain that a technician must visit to provide a professional quote.
-        3. VISIT COST & CREDIT: The technical visit costs $125. Tell the customer these $125 become a CREDIT toward their final invoice if they hire our services.
-        4. DATA COLLECTION: Collect Name, Phone, Address, and THE SPECIFIC SERVICE needed. If the customer does not provide their phone number, do not ask for it — it will be captured automatically.
-        5. TERMINATION: When the customer clearly says goodbye to END the call (e.g. "bye", "goodbye", "adios", "hasta luego", "nos vemos"), thank them warmly and say [HANGUP].`,
-        voice: "alloy",
+        3. VISIT COST & CREDIT: The technical visit costs $125 — and those $125 become a credit toward their final invoice if they hire us.
+        4. DATA COLLECTION: Collect Name, Phone, Address, and THE SPECIFIC SERVICE needed. If the customer does not provide their phone number, do not ask — it will be captured automatically.
+        5. TERMINATION: When the customer says goodbye (e.g. "bye", "goodbye", "adios", "hasta luego", "chao", "nos vemos"), say a warm short farewell and output [HANGUP].`,
+        voice: "shimmer",        // ✅ voz femenina más natural
+        speed: 1.25,             // ✅ 25% más rápido — ahorra tokens y suena humano
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         turn_detection: {
           type: "server_vad",
-          threshold: 0.6,       // ✅ FIX: filtro de ruido balanceado
-          silence_duration_ms: 800, // ✅ FIX 2: era 120000 (2 min!) → ahora 800ms
-          prefix_padding_ms: 300
+          threshold: 0.6,
+          silence_duration_ms: 600, // ✅ un poco menos de pausa entre turnos
+          prefix_padding_ms: 200
         }
       }
     }));
 
+    // ✅ Saludo exacto, forzado palabra por palabra, siempre en inglés
     oaWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: `Say EXACTLY this greeting in English, word for word, nothing else:
+        instructions: `Say EXACTLY this in English, word for word, no changes:
 "Thank you for calling Domotik Solutions LLC, your trusted home and building automation experts. My name is Elena, how can I help you today?"`
       }
     }));
@@ -68,7 +92,7 @@ wss.on("connection", (twilioWs) => {
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
 
-    // Barge-in: el cliente interrumpe a Elena
+    // Barge-in: cliente interrumpe a Elena
     if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
       twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
       oaWs.send(JSON.stringify({ type: "response.cancel" }));
@@ -88,18 +112,16 @@ wss.on("connection", (twilioWs) => {
     if (evt.type === "response.audio_transcript.done") {
       fullTranscript.push(`Elena: ${evt.transcript}`);
 
-      // ✅ FIX 3: solo cuelga si Elena dice [HANGUP], no por "gracias" del cliente
       if (evt.transcript.includes("[HANGUP]") && !hangupScheduled) {
         hangupScheduled = true;
         setTimeout(() => {
           if (callSid) {
-            // ✅ FIX 1: usa callSid, NO streamSid
             client.calls(callSid).update({ status: "completed" }).catch((e) =>
               console.error("❌ Error colgando llamada:", e)
             );
           }
           twilioWs.close();
-        }, 2500); // pequeño delay para que Elena termine de hablar
+        }, 2500);
       }
     }
   });
@@ -110,19 +132,17 @@ wss.on("connection", (twilioWs) => {
     if (msg.event === "start") {
       streamSid = msg.start.streamSid;
       callSid = msg.start.callSid;
+      console.log(`📞 Llamada iniciada | callSid: ${callSid} | callerPhone URL: ${callerPhone}`);
 
-      // Log completo para debug — así vemos exactamente qué manda Twilio
-      console.log("📋 START payload:", JSON.stringify(msg.start, null, 2));
-
-      // Twilio envía el caller en distintos campos según configuración
-      callerPhone =
-        msg.start?.customParameters?.From ||
-        msg.start?.customParameters?.from ||
-        msg.start?.from ||
-        msg.start?.to ||
-        null;
-
-      console.log(`📞 callSid: ${callSid} | callerPhone: ${callerPhone}`);
+      // ✅ Si no llegó por URL, lo buscamos directamente en la API de Twilio
+      if (!callerPhone || callerPhone === "unknown") {
+        client.calls(callSid).fetch()
+          .then((call) => {
+            callerPhone = call.from;
+            console.log(`📱 callerPhone desde API Twilio: ${callerPhone}`);
+          })
+          .catch((e) => console.error("❌ No se pudo obtener caller desde API:", e));
+      }
     }
 
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
@@ -140,7 +160,6 @@ wss.on("connection", (twilioWs) => {
     const chat = fullTranscript.join("\n");
 
     try {
-      // Analista GPT — extrae datos del cliente
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -193,11 +212,15 @@ If a field is missing, use "Not provided".`
   });
 });
 
+// ✅ Webhook de Twilio — captura el Caller ID del POST body y lo pasa al WebSocket
 app.post("/twilio/voice", (req, res) => {
+  const callerNumber = req.body?.From || "unknown";
+  console.log(`📲 Llamada entrante desde: ${callerNumber}`);
+
   res
     .type("text/xml")
     .send(
-      `<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream" /></Connect></Response>`
+      `<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream?caller=${encodeURIComponent(callerNumber)}" /></Connect></Response>`
     );
 });
 
