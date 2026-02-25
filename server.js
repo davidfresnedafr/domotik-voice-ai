@@ -65,7 +65,7 @@ COLLECT IN THIS EXACT ORDER — confirm each before moving to next:
 RULES:
 - Never give prices for labor or products.
 - Visit fee: $125 — becomes credit if they hire us.
-- Services: security cameras, smart home, home theater, cabling, access control, alarms, intercoms, AV, electrical work, thermostat install.
+- Services: security cameras, smart home, home theater, cabling, access control, alarms, intercoms, AV, electrical work, thermostat install, computer installation and setup, printer installation and network setup, IT support, network and WiFi setup.
 - Only serves South Florida (Port St. Lucie to Florida Keys). If outside area → say so and [HANGUP].
 - Out of scope service → apologize and [HANGUP].
 - When customer says goodbye → short farewell → [HANGUP].`,
@@ -122,23 +122,27 @@ RULES:
       const t = text.toLowerCase();
       const goodbyes = ["bye", "goodbye", "good bye", "adios", "adiós",
                         "hasta luego", "chao", "chau", "nos vemos", "take care",
-                        "have a good day", "have a great day", "talk to you later"];
-      // Only trigger if goodbye word is near end of sentence (not mid-conversation)
-      const endsWithGoodbye = goodbyes.some(w => t.endsWith(w) || t.endsWith(w + ".") || t.endsWith(w + "!"));
-      if (endsWithGoodbye && !hangupScheduled) {
+                        "have a good day", "have a great day", "talk to you later",
+                        "see you", "thank you bye", "gracias adios", "gracias adiós"];
+      const saidGoodbye = goodbyes.some(w => t.includes(w));
+      if (saidGoodbye && !hangupScheduled) {
         console.log("👋 Cliente se despidió");
         scheduleHangup(4000);
       }
     }
 
-    // Elena transcript — save + detect [HANGUP]
+    // Elena transcript — save + detect [HANGUP] or farewell phrases
     if (evt.type === "response.audio_transcript.done") {
       const text = evt.transcript || "";
       fullTranscript.push(`Elena: ${text}`);
       console.log(`🤖 Elena: ${text}`);
 
-      if (text.includes("[HANGUP]") && !hangupScheduled) {
-        console.log("📴 Elena dijo [HANGUP]");
+      const elenaGoodbyes = ["[hangup]", "have a great day", "have a wonderful day",
+        "goodbye", "take care", "que tenga", "buen día", "buenas tardes", "hasta luego"];
+      const elenaIsDone = elenaGoodbyes.some(w => text.toLowerCase().includes(w));
+
+      if (elenaIsDone && !hangupScheduled) {
+        console.log("📴 Elena se despidió — colgando");
         scheduleHangup(2500);
       }
     }
