@@ -54,10 +54,13 @@ wss.on("connection", (twilioWs) => {
       }
     }));
 
-    oaWs.send(JSON.stringify({
-      type: "response.create",
-      response: { instructions: "Greet the customer ONLY as Elena from Domotik Solutions LLC. Be professional and mention the $125 visit and the credit policy if they ask about costs." }
-    }));
+    // Retrasamos un poco el saludo inicial para que la conexión de audio se estabilice y no haga ruidos raros
+    setTimeout(() => {
+      oaWs.send(JSON.stringify({
+        type: "response.create",
+        response: { instructions: "Introduce yourself ONLY as Elena from Domotik Solutions LLC. Be warm and professional." }
+      }));
+    }, 1000);
   });
 
   oaWs.on("message", (raw) => {
@@ -143,4 +146,4 @@ app.post("/twilio/voice", (req, res) => {
     </Response>`);
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Elena Domotik LLC Activa (Visita $125 con Crédito)`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Elena Activa para Domotik Solutions`));
