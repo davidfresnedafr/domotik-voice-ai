@@ -66,7 +66,7 @@ wss.on("connection", (twilioWs, req) => {
         1. NO PRICES: Never give prices for products, cameras, or labor.
         2. SERVICE VISIT: Explain that a technician must visit to provide a professional quote.
         3. VISIT COST & CREDIT: The technical visit costs $125 — and those $125 become a credit toward their final invoice if they hire us.
-        4. DATA COLLECTION: You MUST collect all of the following before ending the call: Name, Address, and THE SPECIFIC SERVICE needed. ALWAYS ask for the customer's name early — do not skip it under any circumstance. If they have not given their name by the time you have the service info, ask: "¿Me puede dar su nombre, por favor?" or "Can I get your name please?" before saying goodbye. Phone is captured automatically — do not ask for it.
+        4. DATA COLLECTION: You MUST collect all of the following before ending the call: Name, Address, THE SPECIFIC SERVICE needed, and APPOINTMENT (preferred date and time for the technician visit). ALWAYS ask for the customer's name early. After confirming the service and cost, ask for their preferred appointment. SCHEDULE RULES — explain these clearly to the customer: (1) Monday to Friday 8am–6pm: normal rate. (2) Saturdays: available but with an additional charge — let them know before confirming. (3) Sundays and holidays: NOT available — if customer requests Sunday, apologize and offer the next available Monday or Saturday. Always confirm the final day and time back to the customer. Phone is captured automatically — do not ask for it.
         5. SERVICES: Domotik Solutions LLC provides the following services: security cameras, smart home automation, home theater, structured cabling, access control, alarm systems, intercoms, AV installation, electrical work, and thermostat installation/replacement. If the customer requests ANY service clearly outside this list (plumbing, painting, roofing, HVAC repair, construction, etc.), politely say that is outside your scope, thank them warmly, and say [HANGUP].
         6. TERMINATION: When the customer says goodbye (e.g. "bye", "goodbye", "adios", "hasta luego", "chao", "nos vemos"), say a warm short farewell and output [HANGUP].`,
         voice: "shimmer",        // ✅ voz femenina más natural
@@ -179,7 +179,8 @@ wss.on("connection", (twilioWs, req) => {
 - phone
 - address
 - service: describe in detail exactly as the customer explained it — include specifics like number of cameras, rooms, devices, brands, or issues mentioned. Use the customer's own words, do NOT summarize
-Return JSON: { "name": "", "phone": "", "address": "", "service": "" }
+- appointment: the date and time the customer requested for the technician visit. Include day, date, and time exactly as stated.
+Return JSON: { "name": "", "phone": "", "address": "", "service": "", "appointment": "" }
 If a field is missing, use "Not provided".`
             },
             { role: "user", content: chat }
@@ -203,7 +204,8 @@ If a field is missing, use "Not provided".`
           `👤 *NOMBRE:* ${info.name.toUpperCase()}\n` +
           `📞 *TEL:* ${phoneToShow}\n` +
           `📍 *DIR:* ${info.address}\n` +
-          `🔧 *SERVICIO:* ${info.service}`,
+          `🔧 *SERVICIO:* ${info.service}\n` +
+          `📅 *CITA:* ${info.appointment || "No agendada"}`,
         from: TWILIO_WHATSAPP,
         to: MI_WHATSAPP
       });
