@@ -31,6 +31,7 @@ wss.on("connection", (twilioWs, req) => {
   let callSid       = null;
   let fullTranscript = [];
   let hangupScheduled = false;
+  let bargeInTime = 0;
 
   // ── OpenAI Realtime ────────────────────────────────────────
   const oaWs = new WebSocket(
@@ -289,4 +290,5 @@ app.post("/twilio/voice", (req, res) => {
 
 server.listen(PORT, "0.0.0.0", () =>
   console.log(`🚀 Domotik Voice AI corriendo en puerto ${PORT}`)
+);
 );
