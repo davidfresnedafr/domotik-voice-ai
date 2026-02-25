@@ -65,7 +65,8 @@ wss.on("connection", (twilioWs, req) => {
         2. SERVICE VISIT: Explain that a technician must visit to provide a professional quote.
         3. VISIT COST & CREDIT: The technical visit costs $125 — and those $125 become a credit toward their final invoice if they hire us.
         4. DATA COLLECTION: Collect Name, Phone, Address, and THE SPECIFIC SERVICE needed. If the customer does not provide their phone number, do not ask — it will be captured automatically.
-        5. TERMINATION: When the customer says goodbye (e.g. "bye", "goodbye", "adios", "hasta luego", "chao", "nos vemos"), say a warm short farewell and output [HANGUP].`,
+        5. SERVICES: Domotik Solutions LLC provides the following services: security cameras, smart home automation, home theater, structured cabling, access control, alarm systems, intercoms, AV installation, electrical work, and thermostat installation/replacement. If the customer requests ANY service clearly outside this list (plumbing, painting, roofing, HVAC repair, construction, etc.), politely say that is outside your scope, thank them warmly, and say [HANGUP].
+        6. TERMINATION: When the customer says goodbye (e.g. "bye", "goodbye", "adios", "hasta luego", "chao", "nos vemos"), say a warm short farewell and output [HANGUP].`,
         voice: "shimmer",        // ✅ voz femenina más natural
         speed: 1.25,             // ✅ 25% más rápido — ahorra tokens y suena humano
         input_audio_format: "g711_ulaw",
