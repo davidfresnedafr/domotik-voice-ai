@@ -58,7 +58,10 @@ wss.on("connection", (twilioWs) => {
 
     oaWs.send(JSON.stringify({
       type: "response.create",
-      response: { instructions: "Greet the customer immediately with the pitch." }
+      response: {
+        instructions: `Say EXACTLY this greeting in English, word for word, nothing else:
+"Thank you for calling Domotik Solutions LLC, your trusted home and building automation experts. My name is Elena, how can I help you today?"`
+      }
     }));
   });
 
@@ -107,8 +110,19 @@ wss.on("connection", (twilioWs) => {
     if (msg.event === "start") {
       streamSid = msg.start.streamSid;
       callSid = msg.start.callSid;
-      callerPhone = msg.start.customParameters?.From || msg.start.from || null;
-      console.log(`📞 Llamada iniciada | callSid: ${callSid} | caller: ${callerPhone}`);
+
+      // Log completo para debug — así vemos exactamente qué manda Twilio
+      console.log("📋 START payload:", JSON.stringify(msg.start, null, 2));
+
+      // Twilio envía el caller en distintos campos según configuración
+      callerPhone =
+        msg.start?.customParameters?.From ||
+        msg.start?.customParameters?.from ||
+        msg.start?.from ||
+        msg.start?.to ||
+        null;
+
+      console.log(`📞 callSid: ${callSid} | callerPhone: ${callerPhone}`);
     }
 
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
