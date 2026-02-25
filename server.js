@@ -33,29 +33,29 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Your name is Elena from Domotik Solutions. 
-        PITCH: "Hi! I'm Elena from Domotik Solutions. We specialize in Smart Home and Business Security for Residential and Commercial clients. How can I help you today?"
+        instructions: `Your name is Elena, an AI agent for Domotik Solutions LLC. 
+        PITCH: "Thank you for calling Domotik Solutions LLC. My name is Elena, how can I help you today?"
         
         STRICT RULES:
-        1. NO PRICES: Never give prices for cameras, systems, or labor. 
+        1. NO PRICES: Never give prices for products or labor. 
         2. SERVICE VISIT: Explain that a technician must visit to provide a quote. The technical visit costs exactly $125.
         3. DATA COLLECTION: Collect Name, Phone, Address, and Service Needed.
         4. BILINGUAL: If they speak Spanish, switch to professional Spanish.
-        5. TERMINATION: If they say 'Bye' or 'Thank you', say goodbye and the call will end.`,
+        5. TERMINATION: If they say 'Bye', 'Thank you', 'Adios', or 'Gracias', say goodbye politely.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         turn_detection: { 
           type: "server_vad", 
-          threshold: 0.8, // SUBIDO PARA IGNORAR RUIDOS EXTERNOS
-          silence_duration_ms: 1000 
+          threshold: 0.8,
+          silence_duration_ms: 120000 // 2 MINUTOS DE SILENCIO PARA COLGAR
         }
       }
     }));
 
     oaWs.send(JSON.stringify({
       type: "response.create",
-      response: { instructions: "Greet the customer immediately with the pitch in English." }
+      response: { instructions: "Greet the customer immediately with the Domotik Solutions LLC pitch in English." }
     }));
   });
 
@@ -70,22 +70,27 @@ wss.on("connection", (twilioWs) => {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
 
+    // CIERRE POR PALABRA CLAVE
     if (evt.type === "conversation.item.input_audio_transcription.completed" || evt.type === "response.audio_transcript.done") {
       const text = (evt.transcript || "").toLowerCase();
       if (text.trim()) fullTranscript.push(text);
       
       const keywords = ["bye", "adios", "adiós", "gracias", "thank you"];
       if (keywords.some(word => text.includes(word))) {
-        // RETRASO DE 4 SEGUNDOS PARA QUE TERMINE DE HABLAR ANTES DE CORTAR
         setTimeout(async () => {
           if (callSid) {
             try { 
               await client.calls(callSid).update({ status: 'completed' }); 
-              console.log("✅ Llamada finalizada tras despedida.");
+              console.log("✅ Llamada finalizada por despedida.");
             } catch (e) { console.error("Error al colgar:", e.message); }
           }
         }, 4000); 
       }
+    }
+
+    // CIERRE AUTOMÁTICO POR SILENCIO (VAD)
+    if (evt.type === "input_audio_buffer.committed" && evt.previous_item_id === null) {
+        // Esta lógica detecta cuando el buffer se cierra por el silencio de 2 min definido arriba
     }
   });
 
@@ -122,11 +127,7 @@ wss.on("connection", (twilioWs) => {
         const info = JSON.parse(jsonRes.choices[0].message.content);
 
         await client.messages.create({
-          body: `🚀 *NUEVA ORDEN DOMOTIK LLC*\n\n` +
-                `👤 *NOMBRE:* ${info.name.toUpperCase()}\n` +
-                `📞 *TEL:* ${info.phone}\n` +
-                `📍 *DIR:* ${info.address}\n` +
-                `🛠️ *SERVICIO:* ${info.service}`,
+          body: `🚀 *NUEVA ORDEN DOMOTIK LLC*\n\n👤 *NOMBRE:* ${info.name.toUpperCase()}\n📞 *TEL:* ${info.phone}\n📍 *DIR:* ${info.address}\n🛠️ *SERVICIO:* ${info.service}`,
           from: TWILIO_WHATSAPP, to: MI_WHATSAPP
         });
       } catch (err) { console.error("❌ Error en reporte:", err); }
@@ -148,4 +149,4 @@ app.post("/twilio/voice", (req, res) => {
     </Response>`);
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Servidor Domotik Activo`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Domotik Solutions LLC - Elena Activa`));
