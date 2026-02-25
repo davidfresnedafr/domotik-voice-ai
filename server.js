@@ -34,6 +34,7 @@ wss.on("connection", (twilioWs, req) => {
   let callSid = null;
   let fullTranscript = [];
   let hangupScheduled = false;
+  let bargeInStart = 0;
 
   const oaWs = new WebSocket("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
     headers: {
@@ -47,34 +48,34 @@ wss.on("connection", (twilioWs, req) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `You are Elena, receptionist for Domotik Solutions LLC. Be warm, concise, human — never robotic. Short answers only.
+        instructions: `You are Elena, receptionist for Domotik Solutions LLC. Be warm and human. Keep responses concise — 1-2 sentences max per turn.
 
-LANGUAGE: Greet in English. Then match customer language (English or Spanish). Never switch mid-call.
-NOISY CALL: Ask to repeat twice, then offer callback and say [HANGUP].
+LANGUAGE: Greet in English always. Then match the customer's language for the rest of the call (English or Spanish). Never switch mid-call.
+NOISY CALL: If you can't understand, ask to repeat. After 2 failed attempts offer callback, collect name + phone only, say [HANGUP].
 
-COLLECT IN ORDER — do not skip steps, do not proceed to next until current is confirmed:
-1. NAME (ask first, do not continue until you have it)
-2. SERVICE (ask: "What exactly do you need?" — get specifics: type, quantity, location. Do not continue until specific.)
-3. ADDRESS — MANDATORY before scheduling. Ask: "What is the full address where you need the service?" Do NOT schedule without a street address and city. If they skip it, ask again before moving on.
-4. APPOINTMENT (ONLY after name + service + address are all confirmed) — Mon-Fri 8am-6pm normal rate. Saturdays with extra charge. No Sundays.
+COLLECT IN THIS ORDER — never skip, never move to next step until current one is confirmed:
+1. NAME — ask first. Do not continue without it.
+2. SERVICE — ask "What exactly do you need?" Get specifics (type, quantity, location). Do not continue until you have a clear answer.
+3. ADDRESS — ask "What is the full address?" including street number, street name and city. This is REQUIRED before scheduling. Do NOT move to step 4 without it.
+4. APPOINTMENT — ask preferred day and time ONLY after steps 1-3 are done. Mon-Fri 8am-6pm normal rate. Saturdays available with extra charge. No Sundays.
 
 RULES:
-- No prices for labor or products ever.
-- Visit fee: $125 (becomes credit if they hire us).
-- Services offered: security cameras, smart home, home theater, cabling, access control, alarms, intercoms, AV, electrical work, thermostat install.
-- Area: South Florida only (Port St. Lucie to Florida Keys). Ask address early — if outside area say so and [HANGUP].
-- Out of scope service → apologize and [HANGUP].
-- Customer says goodbye → short farewell → [HANGUP].`,
+- Never give prices for labor or products.
+- Visit fee is $125 — becomes credit toward final invoice if they hire us.
+- Services: security cameras, smart home, home theater, cabling, access control, alarms, intercoms, AV, electrical work, thermostat install.
+- Only serves South Florida (Port St. Lucie to Florida Keys). Confirm address is in this area. If outside, say so and [HANGUP].
+- If service is outside scope, apologize and [HANGUP].
+- When customer says goodbye → warm farewell → [HANGUP].`,
         voice: "shimmer",
-        speed: 1.35,              // ✅ más rápido = menos segundos de audio = menos costo
+        speed: 1.25,
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
-        max_response_output_tokens: 150, // ✅ limita respuestas largas innecesarias
+        max_response_output_tokens: 200,
         turn_detection: {
           type: "server_vad",
-          threshold: 0.95,
-          silence_duration_ms: 800,  // ✅ reducido: menos tiempo escuchando silencio = menos tokens
-          prefix_padding_ms: 300,
+          threshold: 0.7,
+          silence_duration_ms: 700,
+          prefix_padding_ms: 400,
         },
       },
     }));
@@ -82,7 +83,7 @@ RULES:
     oaWs.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: `Say EXACTLY this in English, word for word, no changes:
+        instructions: `Say EXACTLY this in English, word for word:
 "Thank you for calling Domotik Solutions LLC, your trusted home and building automation experts. My name is Elena, how can I help you today?"`,
       },
     }));
@@ -91,46 +92,46 @@ RULES:
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
 
-    if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
-      twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
-      oaWs.send(JSON.stringify({ type: "response.cancel" }));
+    // Barge-in — only cancel Elena if customer speaks 600ms+ (avoids noise/coughs)
+    if (evt.type === "input_audio_buffer.speech_started") {
+      bargeInStart = Date.now();
+    }
+    if (evt.type === "input_audio_buffer.speech_stopped" && streamSid) {
+      const duration = Date.now() - (bargeInStart || 0);
+      if (duration > 600) {
+        twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
+        oaWs.send(JSON.stringify({ type: "response.cancel" }));
+      }
     }
 
+    // Audio from Elena → Twilio
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
     }
 
+    // Customer transcript — detect goodbye
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
-      const customerText = evt.transcript.toLowerCase();
       fullTranscript.push(`Cliente: ${evt.transcript}`);
-
-      // ✅ Detect goodbye from CUSTOMER side too
-      const goodbyeWords = ["bye", "goodbye", "good bye", "adios", "adiós", "hasta luego", "chao", "chau", "nos vemos", "take care", "thank you so much bye"];
-      const saidGoodbye = goodbyeWords.some(w => customerText.includes(w));
-      if (saidGoodbye && !hangupScheduled) {
-        console.log("👋 Customer said goodbye — scheduling hangup");
+      const t = evt.transcript.toLowerCase();
+      const goodbyes = ["bye", "goodbye", "good bye", "adios", "adiós", "hasta luego", "chao", "chau", "nos vemos", "take care", "gracias adiós", "gracias adios"];
+      if (goodbyes.some(w => t.includes(w)) && !hangupScheduled) {
+        console.log("👋 Cliente se despidió — colgando");
         hangupScheduled = true;
         setTimeout(() => {
-          if (callSid) {
-            client.calls(callSid).update({ status: "completed" })
-              .catch((e) => console.error("❌ Hangup error:", e));
-          }
+          if (callSid) client.calls(callSid).update({ status: "completed" }).catch(console.error);
           twilioWs.close();
-        }, 4000); // 4s so Elena can finish her farewell
+        }, 4000);
       }
     }
 
+    // Elena transcript — detect [HANGUP]
     if (evt.type === "response.audio_transcript.done") {
       fullTranscript.push(`Elena: ${evt.transcript}`);
-
-      // ✅ Detect [HANGUP] from Elena transcript
       if (evt.transcript.includes("[HANGUP]") && !hangupScheduled) {
+        console.log("📴 Elena dijo [HANGUP] — colgando");
         hangupScheduled = true;
         setTimeout(() => {
-          if (callSid) {
-            client.calls(callSid).update({ status: "completed" })
-              .catch((e) => console.error("❌ Hangup error:", e));
-          }
+          if (callSid) client.calls(callSid).update({ status: "completed" }).catch(console.error);
           twilioWs.close();
         }, 2500);
       }
@@ -147,11 +148,8 @@ RULES:
 
       if (!callerPhone || callerPhone === "unknown") {
         client.calls(callSid).fetch()
-          .then((call) => {
-            callerPhone = call.from;
-            console.log(`📱 callerPhone desde API: ${callerPhone}`);
-          })
-          .catch((e) => console.error("❌ No se pudo obtener caller:", e));
+          .then(call => { callerPhone = call.from; console.log(`📱 Caller: ${callerPhone}`); })
+          .catch(console.error);
       }
     }
 
@@ -162,7 +160,7 @@ RULES:
 
   twilioWs.on("close", async () => {
     console.log("🔴 Llamada cerrada. Procesando reporte...");
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 2000));
     if (fullTranscript.length === 0) return;
 
     const chat = fullTranscript.join("\n");
@@ -170,10 +168,7 @@ RULES:
     try {
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
         body: JSON.stringify({
           model: "gpt-4o-mini",
           messages: [
@@ -182,11 +177,11 @@ RULES:
               content: `Extract from this call transcript:
 - name: full name of the customer
 - phone: phone number mentioned by the customer
-- address: FULL street address including street number, street name, city, and state. Search carefully through the entire transcript — the customer may have given it piece by piece or in passing. Include every detail they mentioned (apartment, unit, zip code if given).
-- service: what the CUSTOMER (not Elena) said they need. Use the customer lines only (labeled "Cliente:"). Include specifics like number of cameras, locations, rooms, devices, or brands. NEVER use Elena's words or suggestions as the service description.
-- appointment: exact day and time confirmed for the technician visit. Write as a specific date if possible (e.g. "Saturday February 29 at 12 PM") not just "Next Saturday".
+- address: FULL street address — number, street, city, state. Search the ENTIRE transcript carefully. Customer may have given it piece by piece. Include apartment/unit/zip if mentioned.
+- service: what the CUSTOMER said they need (use lines labeled "Cliente:" only). Include all specifics: type, quantity, locations, brands. Never use Elena's words.
+- appointment: exact confirmed day and time (e.g. "Saturday March 8 at 10 AM"). Not just "next Saturday".
 Return JSON: { "name": "", "phone": "", "address": "", "service": "", "appointment": "" }
-IMPORTANT: For address, piece together ALL location details mentioned anywhere in the conversation. If truly not provided, use "Not provided".`,
+If a field is truly missing, use "Not provided".`,
             },
             { role: "user", content: chat },
           ],
@@ -198,8 +193,7 @@ IMPORTANT: For address, piece together ALL location details mentioned anywhere i
       const info = JSON.parse(jsonRes.choices[0].message.content);
 
       const phoneToShow = (info.phone && info.phone !== "Not provided")
-        ? info.phone
-        : (callerPhone || "Not provided");
+        ? info.phone : (callerPhone || "Not provided");
 
       await client.messages.create({
         body:
@@ -213,20 +207,19 @@ IMPORTANT: For address, piece together ALL location details mentioned anywhere i
         to: MI_WHATSAPP,
       });
 
-      console.log("✅ WhatsApp enviado con éxito.");
+      console.log("✅ WhatsApp enviado.");
     } catch (err) {
-      console.error("❌ Error enviando reporte:", err);
+      console.error("❌ Error reporte:", err);
     }
   });
 
-  oaWs.on("error", (e) => console.error("OpenAI WS error:", e));
-  twilioWs.on("error", (e) => console.error("Twilio WS error:", e));
+  oaWs.on("error", e => console.error("OpenAI WS error:", e));
+  twilioWs.on("error", e => console.error("Twilio WS error:", e));
 });
 
 app.post("/twilio/voice", (req, res) => {
   const callerNumber = req.body?.From || "unknown";
-  console.log(`📲 Llamada entrante desde: ${callerNumber}`);
-
+  console.log(`📲 Llamada entrante: ${callerNumber}`);
   res.type("text/xml").send(
     `<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream?caller=${encodeURIComponent(callerNumber)}" /></Connect></Response>`
   );
