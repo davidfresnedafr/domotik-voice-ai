@@ -17,9 +17,10 @@ const wss = new WebSocketServer({ server, path: "/media-stream" });
 
 wss.on("connection", (twilioWs) => {
   let streamSid = null;
-  let callSid = null; // ✅ FIX 1: separado de streamSid
+  let callSid = null;
+  let callerPhone = null; // ✅ Caller ID de Twilio
   let fullTranscript = [];
-  let hangupScheduled = false; // ✅ FIX 3: evita colgadas duplicadas
+  let hangupScheduled = false;
 
   const oaWs = new WebSocket("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "OpenAI-Beta": "realtime=v1" }
@@ -31,15 +32,18 @@ wss.on("connection", (twilioWs) => {
       session: {
         modalities: ["text", "audio"],
         instructions: `Your name is Elena, the professional AI agent for Domotik Solutions LLC.
-        PITCH: "Thank you for calling Domotik Solutions LLC. My name is Elena, how can I help you today?"
-        
+
+        GREETING RULE (CRITICAL): Your very first message MUST always be in English, no exceptions:
+        "Thank you for calling Domotik Solutions LLC. My name is Elena, how can I help you today?"
+
+        LANGUAGE DETECTION: After the greeting, listen to the customer. If they respond in Spanish, switch to professional Spanish for ALL subsequent responses. If English, stay in English.
+
         STRICT RULES:
         1. NO PRICES: Never give prices for products, cameras, or labor.
         2. SERVICE VISIT: Explain that a technician must visit to provide a professional quote.
-        3. VISIT COST & CREDIT: The technical visit costs $125. IMPORTANT: Tell the customer that these $125 will become a CREDIT toward their final invoice if they decide to hire our services.
-        4. DATA COLLECTION: Collect Name, Phone, Address, and THE SPECIFIC SERVICE needed.
-        5. BILINGUAL: If they speak Spanish, switch to professional Spanish immediately.
-        6. TERMINATION: When the customer clearly says goodbye to END the call (e.g. "bye", "goodbye", "adios", "hasta luego", "nos vemos"), thank them warmly and say [HANGUP].`,
+        3. VISIT COST & CREDIT: The technical visit costs $125. Tell the customer these $125 become a CREDIT toward their final invoice if they hire our services.
+        4. DATA COLLECTION: Collect Name, Phone, Address, and THE SPECIFIC SERVICE needed. If the customer does not provide their phone number, do not ask for it — it will be captured automatically.
+        5. TERMINATION: When the customer clearly says goodbye to END the call (e.g. "bye", "goodbye", "adios", "hasta luego", "nos vemos"), thank them warmly and say [HANGUP].`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
@@ -102,8 +106,9 @@ wss.on("connection", (twilioWs) => {
 
     if (msg.event === "start") {
       streamSid = msg.start.streamSid;
-      callSid = msg.start.callSid; // ✅ FIX 1: capturamos el callSid correcto
-      console.log(`📞 Llamada iniciada | callSid: ${callSid}`);
+      callSid = msg.start.callSid;
+      callerPhone = msg.start.customParameters?.From || msg.start.from || null;
+      console.log(`📞 Llamada iniciada | callSid: ${callSid} | caller: ${callerPhone}`);
     }
 
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
@@ -150,15 +155,19 @@ If a field is missing, use "Not provided".`
       const jsonRes = await response.json();
       const info = JSON.parse(jsonRes.choices[0].message.content);
 
-      // Envío por WhatsApp
+      // ✅ Usar Caller ID si el cliente no dio su número
+      const phoneToShow = (info.phone && info.phone !== "Not provided")
+        ? info.phone
+        : (callerPhone || "Not provided");
+
+      // ✅ WhatsApp limpio — solo los 4 datos
       await client.messages.create({
         body:
           `🚀 *ORDEN TÉCNICA DOMOTIK*\n\n` +
           `👤 *NOMBRE:* ${info.name.toUpperCase()}\n` +
-          `📞 *TEL:* ${info.phone}\n` +
+          `📞 *TEL:* ${phoneToShow}\n` +
           `📍 *DIR:* ${info.address}\n` +
-          `🔧 *SERVICIO:* ${info.service}\n\n` +
-          `📝 *HISTORIAL:*\n${chat.slice(-600)}`,
+          `🔧 *SERVICIO:* ${info.service}`,
         from: TWILIO_WHATSAPP,
         to: MI_WHATSAPP
       });
@@ -181,3 +190,5 @@ app.post("/twilio/voice", (req, res) => {
 server.listen(PORT, "0.0.0.0", () =>
   console.log(`🚀 Servidor Activo en Puerto ${PORT}`)
 );
+
+
