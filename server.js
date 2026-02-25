@@ -29,49 +29,52 @@ wss.on("connection", (twilioWs) => {
   });
 
   oaWs.on("open", () => {
+    // Limpiamos cualquier residuo de audio antes de configurar la sesión
+    oaWs.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
+
     oaWs.send(JSON.stringify({
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
         instructions: `Your name is Elena, the professional AI agent for Domotik Solutions LLC. 
         SALUDO INICIAL: "Thank you for calling Domotik Solutions LLC. My name is Elena, how can I help you today?"
-        
-        STRICT RULES:
-        1. NO PRICES: Never give prices for products, cameras, or labor. 
-        2. SERVICE VISIT: Explain that a technician must visit to provide a professional quote. 
-        3. VISIT COST & CREDIT: The technical visit costs $125. IMPORTANT: Tell the customer that these $125 will become a CREDIT toward their final invoice if they decide to hire our services.
-        4. DATA COLLECTION: Collect Name, Phone, Address, and Service Needed.
-        5. BILINGUAL: If they speak Spanish, switch to professional Spanish immediately.
-        6. TERMINATION: Hang up if the user says 'Bye', 'Thank you', 'Adios', or 'Gracias'.`,
+        RULES:
+        1. NO PRICES.
+        2. SERVICE VISIT: $125 cost, which becomes CREDIT if service is hired.
+        3. DATA: Get Name, Phone, Address, and Service Needed.
+        4. TERMINATION: Hang up on 'Bye', 'Thank you', 'Adios', 'Gracias'.`,
         voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         turn_detection: { 
           type: "server_vad", 
-          threshold: 0.6,
-          silence_duration_ms: 120000 // 2 MINUTOS DE SILENCIO
+          threshold: 0.8, // Más alto para ignorar ruidos estáticos
+          silence_duration_ms: 120000 // 2 min de silencio
         }
       }
     }));
 
-    // Retrasamos un poco el saludo inicial para que la conexión de audio se estabilice y no haga ruidos raros
+    // Retraso mayor para asegurar que el WebSocket esté "limpio" antes del saludo
     setTimeout(() => {
-      oaWs.send(JSON.stringify({
-        type: "response.create",
-        response: { instructions: "Introduce yourself ONLY as Elena from Domotik Solutions LLC. Be warm and professional." }
-      }));
-    }, 1000);
+      if (oaWs.readyState === WebSocket.OPEN) {
+        oaWs.send(JSON.stringify({
+          type: "response.create",
+          response: { instructions: "Introduce yourself professionaly as Elena from Domotik Solutions LLC." }
+        }));
+      }
+    }, 1500);
   });
 
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
 
-    if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
-      twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
-      oaWs.send(JSON.stringify({ type: "response.cancel" }));
-    }
+    // Evitamos enviar paquetes de audio vacíos o corruptos que generan ruido
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
       twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
+    }
+
+    if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
+      twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
     }
 
     if (evt.type === "conversation.item.input_audio_transcription.completed" || evt.type === "response.audio_transcript.done") {
@@ -82,9 +85,8 @@ wss.on("connection", (twilioWs) => {
       if (keywords.some(word => text.includes(word))) {
         setTimeout(async () => {
           if (callSid) {
-            try { 
-              await client.calls(callSid).update({ status: 'completed' }); 
-            } catch (e) { console.error("Error al colgar:", e.message); }
+            try { await client.calls(callSid).update({ status: 'completed' }); } 
+            catch (e) { console.error("Error al colgar:", e.message); }
           }
         }, 4000); 
       }
@@ -97,8 +99,10 @@ wss.on("connection", (twilioWs) => {
       streamSid = msg.start.streamSid;
       callSid = msg.start.callSid; 
       callerNumber = msg.start.customParameters?.from || "Unknown";
+      console.log("📞 Llamada iniciada correctamente.");
     }
-    if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
+    // Solo enviamos audio a OpenAI si es un evento de media válido
+    if (msg.event === "media" && msg.media && msg.media.payload && oaWs.readyState === WebSocket.OPEN) {
       oaWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: msg.media.payload }));
     }
   });
@@ -113,7 +117,7 @@ wss.on("connection", (twilioWs) => {
           body: JSON.stringify({
             model: "gpt-4o-mini",
             messages: [
-              { role: "system", content: `Extract: Name, Phone, Address, and Service. Use ${callerNumber} if phone is missing. Format: JSON { "name": "", "phone": "", "address": "", "service": "" }.` },
+              { role: "system", content: `Extract Name, Phone, Address, Service. Use ${callerNumber} if missing. JSON.` },
               { role: "user", content: chat }
             ],
             response_format: { type: "json_object" }
@@ -124,10 +128,10 @@ wss.on("connection", (twilioWs) => {
         const info = JSON.parse(jsonRes.choices[0].message.content);
 
         await client.messages.create({
-          body: `🚀 *NUEVA ORDEN DOMOTIK LLC*\n\n👤 *NOMBRE:* ${info.name.toUpperCase()}\n📞 *TEL:* ${info.phone}\n📍 *DIR:* ${info.address}\n🛠️ *SERVICIO:* ${info.service}`,
+          body: `🚀 *ORDEN DOMOTIK LLC*\n\n👤: ${info.name.toUpperCase()}\n📞: ${info.phone}\n📍: ${info.address}\n🛠️: ${info.service}`,
           from: TWILIO_WHATSAPP, to: MI_WHATSAPP
         });
-      } catch (err) { console.error("❌ Error en reporte:", err); }
+      } catch (err) { console.error("Error reporte:", err); }
     }
     if (oaWs.readyState === WebSocket.OPEN) oaWs.close();
   });
@@ -146,4 +150,4 @@ app.post("/twilio/voice", (req, res) => {
     </Response>`);
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Elena Activa para Domotik Solutions`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Elena Activa (Sin ruidos de inicio)`));
