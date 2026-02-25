@@ -118,12 +118,29 @@ STRICT RULES:
     }
 
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
+      const customerText = evt.transcript.toLowerCase();
       fullTranscript.push(`Cliente: ${evt.transcript}`);
+
+      // ✅ Detect goodbye from CUSTOMER side too
+      const goodbyeWords = ["bye", "goodbye", "good bye", "adios", "adiós", "hasta luego", "chao", "chau", "nos vemos", "take care", "thank you so much bye"];
+      const saidGoodbye = goodbyeWords.some(w => customerText.includes(w));
+      if (saidGoodbye && !hangupScheduled) {
+        console.log("👋 Customer said goodbye — scheduling hangup");
+        hangupScheduled = true;
+        setTimeout(() => {
+          if (callSid) {
+            client.calls(callSid).update({ status: "completed" })
+              .catch((e) => console.error("❌ Hangup error:", e));
+          }
+          twilioWs.close();
+        }, 4000); // 4s so Elena can finish her farewell
+      }
     }
 
     if (evt.type === "response.audio_transcript.done") {
       fullTranscript.push(`Elena: ${evt.transcript}`);
 
+      // ✅ Detect [HANGUP] from Elena transcript
       if (evt.transcript.includes("[HANGUP]") && !hangupScheduled) {
         hangupScheduled = true;
         setTimeout(() => {
