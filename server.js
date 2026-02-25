@@ -1,234 +1,63 @@
-import express from "express";
-import http from "http";
-import WebSocket, { WebSocketServer } from "ws";
-import twilio from "twilio";
+/**
+ * ============================================================
+ *  CONFIG: Domotik Solutions LLC
+ *  Sector: Home & Building Automation / Low Voltage
+ * ============================================================
+ */
 
-const PORT = process.env.PORT || 10000;
-const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
-const PUBLIC_BASE_URL = "domotik-voice-ai.onrender.com";
+export default {
+  // ── Identity ─────────────────────────────────────────────
+  companyName:   "Domotik Solutions LLC",
+  agentName:     "Elena",
+  accent:        "warm and friendly",  // tone only — language is auto-detected from customer
+  publicUrl:     "domotik-voice-ai.onrender.com",
 
-const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-const MI_WHATSAPP = "whatsapp:+15617141075";
-const TWILIO_WHATSAPP = "whatsapp:+14155238886";
+  // ── Greeting (always delivered in English) ───────────────
+  greeting: "Thank you for calling Domotik Solutions LLC, your trusted home and building automation experts. My name is Elena, how can I help you today?",
 
-const app = express();
-app.use(express.urlencoded({ extended: false })); // ✅ leer body de Twilio
-const server = http.createServer(app);
+  // ── Voice settings ────────────────────────────────────────
+  voice:          "shimmer",   // Options: alloy | echo | fable | onyx | nova | shimmer
+  speed:          1.25,
+  vadThreshold:   0.95,        // 0–1, higher = ignores more background noise
+  silenceDuration: 1200,       // ms to wait after customer stops speaking
 
-// ✅ WebSocketServer sin path fijo — lo manejamos manualmente para leer query params
-const wss = new WebSocketServer({ noServer: true });
+  // ── Services offered ──────────────────────────────────────
+  services: [
+    "security cameras",
+    "smart home automation",
+    "home theater",
+    "structured cabling",
+    "access control",
+    "alarm systems",
+    "intercoms",
+    "AV installation",
+    "electrical work",
+    "thermostat installation and replacement",
+  ],
 
-// ✅ Upgrade manual para capturar el query string (?caller=+1...)
-server.on("upgrade", (req, socket, head) => {
-  if (req.url.startsWith("/media-stream")) {
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit("connection", ws, req);
-    });
-  } else {
-    socket.destroy();
-  }
-});
+  // ── Visit & pricing rules ─────────────────────────────────
+  visitRule:     "Explain that a technician must visit the property to provide a professional quote.",
+  visitCostRule: "The technical visit costs $125, and those $125 become a CREDIT toward the final invoice if the customer hires us.",
 
-wss.on("connection", (twilioWs, req) => {
-  // ✅ Extraer caller del query string que pusimos en el TwiML
-  const url = new URL(req.url, `http://localhost`);
-  let callerPhone = url.searchParams.get("caller") || null;
-  console.log(`📱 callerPhone desde URL: ${callerPhone}`);
+  // ── Schedule rule (told to agent) ────────────────────────
+  scheduleRule: `SCHEDULE RULES:
+    (1) Monday to Friday 8am–6pm: normal rate.
+    (2) Saturdays: available but with an additional charge — inform the customer before confirming.
+    (3) Sundays and holidays: NOT available — offer next Monday or Saturday instead.
+    Always confirm the final day and time back to the customer.`,
 
-  let streamSid = null;
-  let callSid = null;
-  let fullTranscript = [];
-  let hangupScheduled = false;
+  // ── Data to collect from every call ──────────────────────
+  collectFields: ["name", "phone", "address", "service", "appointment"],
+  customerLabel: "Cliente",
 
-  const oaWs = new WebSocket("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
-    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "OpenAI-Beta": "realtime=v1" }
-  });
+  // ── WhatsApp notification ─────────────────────────────────
+  whatsappFrom:  "whatsapp:+14155238886",  // Twilio sandbox or your number
+  whatsappTo:    "whatsapp:+15617141075",  // Your personal WhatsApp
+  reportEmoji:   "🚀",
+  reportTitle:   "ORDEN TÉCNICA DOMOTIK",
 
-  oaWs.on("open", () => {
-    oaWs.send(JSON.stringify({
-      type: "session.update",
-      session: {
-        modalities: ["text", "audio"],
-        instructions: `You are Elena, a professional receptionist from Bogotá, Colombia working for Domotik Solutions LLC.
-
-        PERSONALITY & SPEECH STYLE (CRITICAL):
-        - Speak naturally and conversationally, like a real person — NOT like a robot or formal assistant.
-        - Use a warm, friendly Bogotá Colombian tone. Use natural Colombian expressions when appropriate (e.g. "claro que sí", "con mucho gusto", "cómo le parece", "listo").
-        - Speak at a normal, natural pace — not slow, not robotic. Be concise and direct.
-        - Do NOT over-explain. Keep responses short and to the point.
-        - Never repeat the same phrase twice in a row.
-        - NOISY ENVIRONMENT: If you can't understand the customer due to background noise, say naturally: "Disculpe, hay mucho ruido — ¿me puede repetir eso?" or in English: "Sorry, there's a lot of background noise — could you repeat that?" Do NOT guess what they said.
-        - VERY NOISY (can't understand after 2 attempts): Say "Parece que hay demasiado ruido — ¿le puedo llamar en otro momento? Déjeme su nombre y número y le devolvemos la llamada." / "It seems very noisy — can we call you back? Just leave your name and number." Then collect name and phone only, say [HANGUP].
-
-        LANGUAGE DETECTION: After your greeting (always in English), listen to the customer. If they speak Spanish, switch immediately to natural Colombian Spanish. If English, stay in English but keep the warm tone.
-
-        STRICT RULES:
-        1. NO PRICES: Never give prices for products, cameras, or labor.
-        2. SERVICE VISIT: Explain that a technician must visit to provide a professional quote.
-        3. VISIT COST & CREDIT: The technical visit costs $125 — and those $125 become a credit toward their final invoice if they hire us.
-        4. DATA COLLECTION: You MUST collect all of the following before ending the call: Name, Address, THE SPECIFIC SERVICE needed, and APPOINTMENT (preferred date and time for the technician visit). ALWAYS ask for the customer's name early. After confirming the service and cost, ask for their preferred appointment. SCHEDULE RULES — explain these clearly to the customer: (1) Monday to Friday 8am–6pm: normal rate. (2) Saturdays: available but with an additional charge — let them know before confirming. (3) Sundays and holidays: NOT available — if customer requests Sunday, apologize and offer the next available Monday or Saturday. Always confirm the final day and time back to the customer. Phone is captured automatically — do not ask for it.
-        5. SERVICES: Domotik Solutions LLC provides the following services: security cameras, smart home automation, home theater, structured cabling, access control, alarm systems, intercoms, AV installation, electrical work, and thermostat installation/replacement. If the customer requests ANY service clearly outside this list (plumbing, painting, roofing, HVAC repair, construction, etc.), politely say that is outside your scope, thank them warmly, and say [HANGUP].
-        6. TERMINATION: When the customer says goodbye (e.g. "bye", "goodbye", "adios", "hasta luego", "chao", "nos vemos"), say a warm short farewell and output [HANGUP].`,
-        voice: "shimmer",        // ✅ voz femenina más natural
-        speed: 1.25,             // ✅ 25% más rápido — ahorra tokens y suena humano
-        input_audio_format: "g711_ulaw",
-        output_audio_format: "g711_ulaw",
-        turn_detection: {
-          type: "server_vad",
-          threshold: 0.95,          // ✅ máximo — solo voz directa al micrófono
-          silence_duration_ms: 1200, // ✅ más pausa — en bar hay ruido constante
-          prefix_padding_ms: 500     // ✅ más padding para no cortar palabras
-        }
-      }
-    }));
-
-    // ✅ Saludo exacto, forzado palabra por palabra, siempre en inglés
-    oaWs.send(JSON.stringify({
-      type: "response.create",
-      response: {
-        instructions: `Say EXACTLY this in English, word for word, no changes:
-"Thank you for calling Domotik Solutions LLC, your trusted home and building automation experts. My name is Elena, how can I help you today?"`
-      }
-    }));
-  });
-
-  oaWs.on("message", (raw) => {
-    const evt = JSON.parse(raw.toString());
-
-    // Barge-in: cliente interrumpe a Elena
-    if (evt.type === "input_audio_buffer.speech_started" && streamSid) {
-      twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
-      oaWs.send(JSON.stringify({ type: "response.cancel" }));
-    }
-
-    // Audio de Elena → Twilio
-    if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
-      twilioWs.send(JSON.stringify({ event: "media", streamSid, media: { payload: evt.delta } }));
-    }
-
-    // Transcripción del cliente
-    if (evt.type === "conversation.item.input_audio_transcription.completed") {
-      fullTranscript.push(`Cliente: ${evt.transcript}`);
-    }
-
-    // Transcripción de Elena — detectar [HANGUP]
-    if (evt.type === "response.audio_transcript.done") {
-      fullTranscript.push(`Elena: ${evt.transcript}`);
-
-      if (evt.transcript.includes("[HANGUP]") && !hangupScheduled) {
-        hangupScheduled = true;
-        setTimeout(() => {
-          if (callSid) {
-            client.calls(callSid).update({ status: "completed" }).catch((e) =>
-              console.error("❌ Error colgando llamada:", e)
-            );
-          }
-          twilioWs.close();
-        }, 2500);
-      }
-    }
-  });
-
-  twilioWs.on("message", (raw) => {
-    const msg = JSON.parse(raw.toString());
-
-    if (msg.event === "start") {
-      streamSid = msg.start.streamSid;
-      callSid = msg.start.callSid;
-      console.log(`📞 Llamada iniciada | callSid: ${callSid} | callerPhone URL: ${callerPhone}`);
-
-      // ✅ Si no llegó por URL, lo buscamos directamente en la API de Twilio
-      if (!callerPhone || callerPhone === "unknown") {
-        client.calls(callSid).fetch()
-          .then((call) => {
-            callerPhone = call.from;
-            console.log(`📱 callerPhone desde API Twilio: ${callerPhone}`);
-          })
-          .catch((e) => console.error("❌ No se pudo obtener caller desde API:", e));
-      }
-    }
-
-    if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
-      oaWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: msg.media.payload }));
-    }
-  });
-
-  twilioWs.on("close", async () => {
-    console.log("🔴 Llamada cerrada. Procesando reporte...");
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    if (fullTranscript.length === 0) return;
-
-    const chat = fullTranscript.join("\n");
-
-    try {
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${OPENAI_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "system",
-              content: `Extract from this call transcript:
-- name
-- phone
-- address
-- service: describe in detail exactly as the customer explained it — include specifics like number of cameras, rooms, devices, brands, or issues mentioned. Use the customer's own words, do NOT summarize
-- appointment: the date and time the customer requested for the technician visit. Include day, date, and time exactly as stated.
-Return JSON: { "name": "", "phone": "", "address": "", "service": "", "appointment": "" }
-If a field is missing, use "Not provided".`
-            },
-            { role: "user", content: chat }
-          ],
-          response_format: { type: "json_object" }
-        })
-      });
-
-      const jsonRes = await response.json();
-      const info = JSON.parse(jsonRes.choices[0].message.content);
-
-      // ✅ Usar Caller ID si el cliente no dio su número
-      const phoneToShow = (info.phone && info.phone !== "Not provided")
-        ? info.phone
-        : (callerPhone || "Not provided");
-
-      // ✅ WhatsApp limpio — solo los 4 datos
-      await client.messages.create({
-        body:
-          `🚀 *ORDEN TÉCNICA DOMOTIK*\n\n` +
-          `👤 *NOMBRE:* ${info.name.toUpperCase()}\n` +
-          `📞 *TEL:* ${phoneToShow}\n` +
-          `📍 *DIR:* ${info.address}\n` +
-          `🔧 *SERVICIO:* ${info.service}\n` +
-          `📅 *CITA:* ${info.appointment || "No agendada"}`,
-        from: TWILIO_WHATSAPP,
-        to: MI_WHATSAPP
-      });
-
-      console.log("✅ WhatsApp enviado con éxito.");
-    } catch (err) {
-      console.error("❌ Error enviando reporte:", err);
-    }
-  });
-});
-
-// ✅ Webhook de Twilio — captura el Caller ID del POST body y lo pasa al WebSocket
-app.post("/twilio/voice", (req, res) => {
-  const callerNumber = req.body?.From || "unknown";
-  console.log(`📲 Llamada entrante desde: ${callerNumber}`);
-
-  res
-    .type("text/xml")
-    .send(
-      `<Response><Connect><Stream url="wss://${PUBLIC_BASE_URL}/media-stream?caller=${encodeURIComponent(callerNumber)}" /></Connect></Response>`
-    );
-});
-
-server.listen(PORT, "0.0.0.0", () =>
-  console.log(`🚀 Servidor Activo en Puerto ${PORT}`)
-);
+  // ── Extra prompt rules (optional) ────────────────────────
+  extraRules: `
+  - SERVICE AREA: Domotik Solutions LLC serves all of South Florida from Port St. Lucie down to the Florida Keys, including St. Lucie, Martin, Palm Beach, Broward, Miami-Dade counties, and the Florida Keys (Key Largo, Marathon, Key West). If the customer is outside this area, politely say: "Unfortunately we only service the South Florida area, from Port St. Lucie to the Florida Keys." Thank them warmly and say [HANGUP]. If the customer has not mentioned their location yet, ask for their address early to confirm they are within the service area before continuing.
+  `,
+};
