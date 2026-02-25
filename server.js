@@ -34,7 +34,6 @@ wss.on("connection", (twilioWs, req) => {
   let callSid = null;
   let fullTranscript = [];
   let hangupScheduled = false;
-  let bargeInStart = 0;
 
   const oaWs = new WebSocket("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
     headers: {
@@ -73,9 +72,9 @@ RULES:
         max_response_output_tokens: 200,
         turn_detection: {
           type: "server_vad",
-          threshold: 0.7,
-          silence_duration_ms: 700,
-          prefix_padding_ms: 400,
+          threshold: 0.9,   // high — only real voice triggers, ignores vibration/noise/TV
+          silence_duration_ms: 1000, // wait 1s of silence before Elena responds
+          prefix_padding_ms: 500,
         },
       },
     }));
@@ -92,17 +91,8 @@ RULES:
   oaWs.on("message", (raw) => {
     const evt = JSON.parse(raw.toString());
 
-    // Barge-in — only cancel Elena if customer speaks 600ms+ (avoids noise/coughs)
-    if (evt.type === "input_audio_buffer.speech_started") {
-      bargeInStart = Date.now();
-    }
-    if (evt.type === "input_audio_buffer.speech_stopped" && streamSid) {
-      const duration = Date.now() - (bargeInStart || 0);
-      if (duration > 600) {
-        twilioWs.send(JSON.stringify({ event: "clear", streamSid }));
-        oaWs.send(JSON.stringify({ type: "response.cancel" }));
-      }
-    }
+    // Barge-in DISABLED — no noise, vibration or background sound will interrupt Elena
+    // Elena only stops when the VAD detects real sustained speech from the customer
 
     // Audio from Elena → Twilio
     if (evt.type === "response.audio.delta" && evt.delta && streamSid) {
