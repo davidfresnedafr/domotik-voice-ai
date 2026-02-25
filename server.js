@@ -28,14 +28,24 @@ wss.on("connection", (twilioWs) => {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        instructions: `Your name is Elena from Domotik Solutions. 
-        PITCH: "Hi! I'm Elena from Domotik Solutions. We specialize in Smart Home and Business Security for Residential and Commercial clients. How can I help you today?"
-        GOAL: You MUST collect Name, Phone number, and Service Address. Be persistent.
-        TERMINATION: If the user says 'Bye' or 'Thank you', say goodbye and hang up.`,
-        voice: "alloy",
+        instructions: `Your name is Elena, the professional AI agent for Domotik Solutions LLC. 
+        PITCH: "Thank you for calling Domotik Solutions LLC. My name is Elena, how can I help you today?"
+        
+        STRICT RULES:
+        1. NO PRICES: Never give prices for products, cameras, or labor. 
+        2. SERVICE VISIT: Explain that a technician must visit to provide a professional quote. 
+        3. VISIT COST & CREDIT: The technical visit costs $125. IMPORTANT: Tell the customer that these $125 will become a CREDIT toward their final invoice if they decide to hire our services.
+        4. DATA COLLECTION: Collect Name, Phone, Address, and THE SPECIFIC SERVICE needed.
+        5. BILINGUAL: If they speak Spanish, switch to professional Spanish immediately.
+        6. TERMINATION: Hang up if the user says 'Bye', 'Thank you', 'Adios', or 'Gracias'.`,
+      voice: "alloy",
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
-        turn_detection: { type: "server_vad", threshold: 0.5, silence_duration_ms: 800 }
+        turn_detection: { 
+          type: "server_vad", 
+          threshold: 0.8, // Filtro de ruidos fuerte
+          silence_duration_ms: 120000 // 2 MINUTOS DE PACIENCIA
+        }
       }
     }));
 
