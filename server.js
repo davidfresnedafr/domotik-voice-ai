@@ -57,6 +57,7 @@ wss.on("connection", (twilioWs, req) => {
         - Speak at a normal, natural pace — not slow, not robotic. Be concise and direct.
         - Do NOT over-explain. Keep responses short and to the point.
         - Never repeat the same phrase twice in a row.
+        - NOISY ENVIRONMENT: If you can't understand the customer due to background noise, say naturally: "Disculpe, hay mucho ruido — ¿me puede repetir eso?" or in English: "Sorry, there's a lot of background noise — could you repeat that?" Do NOT guess what they said.
 
         LANGUAGE DETECTION: After your greeting (always in English), listen to the customer. If they speak Spanish, switch immediately to natural Colombian Spanish. If English, stay in English but keep the warm tone.
 
@@ -73,9 +74,9 @@ wss.on("connection", (twilioWs, req) => {
         output_audio_format: "g711_ulaw",
         turn_detection: {
           type: "server_vad",
-          threshold: 0.6,
-          silence_duration_ms: 600, // ✅ un poco menos de pausa entre turnos
-          prefix_padding_ms: 200
+          threshold: 0.85,       // ✅ filtro de ruido fuerte — solo activa con voz clara
+          silence_duration_ms: 700, // un poco más de pausa para ambientes ruidosos
+          prefix_padding_ms: 300
         }
       }
     }));
