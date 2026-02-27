@@ -148,7 +148,7 @@ CRITICAL RULES — read carefully:
       const saidGoodbye = goodbyes.some(w => t.includes(w));
       if (saidGoodbye && !hangupScheduled) {
         console.log("👋 Cliente se despidió");
-        scheduleHangup(4000);
+        scheduleHangup(6000); // 6s — gives Elena time to say full farewell
       }
     }
 
@@ -164,7 +164,7 @@ CRITICAL RULES — read carefully:
 
       if (elenaIsDone && !hangupScheduled) {
         console.log("📴 Elena se despidió — colgando");
-        scheduleHangup(2500);
+        scheduleHangup(5000); // 5s — enough for Elena to finish her farewell
       }
     }
 
