@@ -33,6 +33,16 @@ wss.on("connection", (twilioWs, req) => {
   let hangupScheduled = false;
   let bargeInTime = 0;
 
+  // ✅ Keepalive — prevents Render/proxy from closing WebSocket after 2 min inactivity
+  const keepAlive = setInterval(() => {
+    if (twilioWs.readyState === twilioWs.OPEN) {
+      twilioWs.ping();
+    }
+    if (oaWs.readyState === WebSocket.OPEN) {
+      oaWs.ping();
+    }
+  }, 30000); // ping every 30 seconds
+
   // ── OpenAI Realtime ────────────────────────────────────────
   const oaWs = new WebSocket(
     "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
@@ -63,7 +73,10 @@ COLLECT IN THIS EXACT ORDER — confirm each before moving to next:
 3. ADDRESS — ask "What is the full address including city?" REQUIRED before scheduling. If they skip it, ask again. Do NOT move to step 4 without a real street address.
 4. APPOINTMENT — ask day and time ONLY after 1+2+3 confirmed. Mon-Fri 8am-6pm normal rate. Saturdays with extra charge. No Sundays. Confirm back the exact date and time.
 
-RULES:
+CRITICAL RULES — read carefully:
+- NEVER assume, infer or make up information the customer has not explicitly said. If you are not 100% sure, ask again.
+- NEVER move to the next step based on something you think you heard. Confirm every answer before proceeding.
+- If the customer's response is unclear or too short, say "I didn't catch that — could you repeat?" Do not guess.
 - Never give prices for labor or products.
 - Visit fee: $125 — becomes credit if they hire us.
 - Services: security cameras, smart home, home theater, cabling, access control, alarms, intercoms, AV, electrical work, thermostat install, computer installation and setup, printer installation and network setup, IT support, network and WiFi setup.
@@ -77,17 +90,17 @@ RULES:
         output_audio_format: "g711_ulaw",
         max_response_output_tokens: 500,
 
-        // ✅ Transcription explicitly enabled — required for transcript events
+        // ✅ Transcription with noise prompt to avoid hallucinations
         input_audio_transcription: {
           model: "whisper-1",
+          prompt: "This is a phone call in English or Spanish. Transcribe only clear human speech. If there is only background noise, music, or no voice, return empty string.",
         },
 
-        // ✅ NO barge-in — noise/clicks/vibration will never interrupt Elena
         turn_detection: {
           type: "server_vad",
-          threshold: 0.9,
-          silence_duration_ms: 1500, // more patience before responding
-          prefix_padding_ms: 500,
+          threshold: 0.95,
+          silence_duration_ms: 1200,
+          prefix_padding_ms: 600,
         },
       },
     }));
@@ -116,7 +129,14 @@ RULES:
 
     // Customer transcript — save + detect goodbye
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
-      const text = evt.transcript || "";
+      const text = (evt.transcript || "").trim();
+
+      // ✅ Filter noise hallucinations — ignore if too short or only punctuation
+      if (text.length < 3 || /^[^a-zA-ZáéíóúÁÉÍÓÚñÑ]+$/.test(text)) {
+        console.log(`🔇 Ruido ignorado: "${text}"`);
+        return;
+      }
+
       fullTranscript.push(`Cliente: ${text}`);
       console.log(`👤 Cliente: ${text}`);
 
@@ -184,6 +204,7 @@ RULES:
 
   // ── Call ended — send WhatsApp report ─────────────────────
   twilioWs.on("close", async () => {
+    clearInterval(keepAlive); // ✅ stop pinging when call ends
     console.log("🔴 Llamada cerrada. Procesando reporte...");
     await new Promise(r => setTimeout(r, 2000));
     if (fullTranscript.length === 0) {
