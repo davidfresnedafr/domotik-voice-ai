@@ -58,7 +58,7 @@ wss.on("connection", (twilioWs, req) => {
 
 TODAY IS: ${today}. Use real dates when scheduling (e.g. "Saturday March 8"), never "next Saturday".
 
-LANGUAGE: Always greet in English. Then match customer language (English or Spanish) for the rest of the call.
+LANGUAGE: Always greet in English. Then IMMEDIATELY detect the language of the customer's FIRST response and use that language for the ENTIRE rest of the call. If customer speaks English → ONLY English. If Spanish → ONLY Spanish. NEVER mix languages.
 NOISY CALL: Ask to repeat. After 2 failed attempts, offer callback, collect name + phone only, then say [HANGUP].
 
 COLLECT IN THIS EXACT ORDER — confirm each step before moving to the next:
@@ -209,7 +209,7 @@ RULES:
               content: `Extract from this call transcript:
 - name: full name of the customer
 - phone: phone number the customer mentioned
-- address: FULL address — number, street, city, state. Search carefully, may be given in parts. Include apartment/unit/zip if mentioned.
+- address: FULL address — number, street, city, and state. If customer said a city in Florida, add ", FL" automatically. Search carefully, may be given in parts. Include apartment/unit/zip if mentioned.
 - service: what the CUSTOMER (lines labeled "Cliente:") said they need. All specifics. Never use Elena's words.
 - appointment: exact confirmed date and time (e.g. "Saturday March 8 at 10 AM"). Never just "next Saturday".
 Return ONLY valid JSON: { "name": "", "phone": "", "address": "", "service": "", "appointment": "" }
