@@ -7,9 +7,9 @@ const PORT = process.env.PORT || 10000;
 const OPENAI_API_KEY   = (process.env.OPENAI_API_KEY || "").trim();
 const PUBLIC_BASE_URL  = "domotik-voice-ai.onrender.com";
 
-const client       = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-const MI_NUMERO    = "+15617141075";
-const TWILIO_SMS   = "+17547036249";  // Número Twilio hardcoded
+const client          = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const MI_WHATSAPP     = "whatsapp:+15617141075";
+const TWILIO_WHATSAPP = "whatsapp:+14155238886";
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -251,7 +251,7 @@ Use "Not provided" for missing fields.`,
     // Send WhatsApp — retry once on failure
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        await client.messages.create({ body, from: TWILIO_SMS, to: MI_NUMERO });
+        await client.messages.create({ body, from: TWILIO_WHATSAPP, to: MI_WHATSAPP });
         console.log(`✅ WhatsApp enviado (intento ${attempt})`);
         break;
       } catch (err) {
