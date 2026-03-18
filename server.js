@@ -170,11 +170,10 @@ RULES:
       callSid   = msg.start.callSid;
       console.log(`📞 Llamada | callSid: ${callSid} | caller: ${callerPhone}`);
 
-      if (!callerPhone || callerPhone === "unknown") {
-        client.calls(callSid).fetch()
-          .then(call => { callerPhone = call.from; console.log(`📱 Caller: ${callerPhone}`); })
-          .catch(e => console.error("❌ Caller error:", e));
-      }
+      // Always fetch from Twilio API to ensure we have the caller number
+      client.calls(callSid).fetch()
+        .then(call => { callerPhone = call.from; console.log(`📱 Caller: ${callerPhone}`); })
+        .catch(e => console.error("❌ Caller error:", e));
     }
 
     if (msg.event === "media" && oaWs.readyState === WebSocket.OPEN) {
@@ -185,6 +184,16 @@ RULES:
   twilioWs.on("close", async () => {
     clearInterval(keepAlive);
     console.log("🔴 Llamada cerrada. Procesando reporte...");
+
+    // Wait for Twilio caller fetch to complete if still pending
+    if (!callerPhone && callSid) {
+      try {
+        const call = await client.calls(callSid).fetch();
+        callerPhone = call.from;
+        console.log(`📱 Caller obtenido al cerrar: ${callerPhone}`);
+      } catch(e) { console.error("❌ Caller fetch on close:", e.message); }
+    }
+
     await new Promise(r => setTimeout(r, 3000));
 
     if (fullTranscript.length === 0) {
