@@ -138,9 +138,10 @@ RULES:
 
       const t = text.toLowerCase();
       const goodbyes = ["bye", "goodbye", "good bye", "adios", "adiós",
-                        "hasta luego", "chao", "chau", "nos vemos",
-                        "gracias adios", "gracias adiós"];
-      if (goodbyes.some(w => t.includes(w)) && !hangupScheduled) {
+                        "hasta luego", "chao", "chau", "nos vemos"];
+      // Only trigger if goodbye is the main intent — must be short phrase
+      const isGoodbye = goodbyes.some(w => t.includes(w)) && t.split(" ").length <= 6;
+      if (isGoodbye && !hangupScheduled) {
         console.log("👋 Cliente se despidió — colgando en 6s");
         scheduleHangup(6000);
       }
