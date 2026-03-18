@@ -45,10 +45,13 @@ wss.on("connection", (twilioWs, req) => {
   );
 
   oaWs.on("open", () => {
-    const today = new Date().toLocaleDateString("en-US", {
-      weekday: "long", year: "numeric", month: "long", day: "numeric",
-      timeZone: "America/New_York",
-    });
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+    const fmt = (d) => d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    const today = fmt(now);
+    const dow = now.getDay();
+    const nextFriday   = new Date(now); nextFriday.setDate(now.getDate() + ((5 - dow + 7) % 7 || 7));
+    const nextSaturday = new Date(now); nextSaturday.setDate(now.getDate() + ((6 - dow + 7) % 7 || 7));
+    const nextMonday   = new Date(now); nextMonday.setDate(now.getDate() + ((1 - dow + 7) % 7 || 7));
 
     oaWs.send(JSON.stringify({
       type: "session.update",
