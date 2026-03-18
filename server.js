@@ -8,8 +8,8 @@ const OPENAI_API_KEY   = (process.env.OPENAI_API_KEY || "").trim();
 const PUBLIC_BASE_URL  = "domotik-voice-ai.onrender.com";
 
 const client       = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-const MI_NUMERO    = "+15617141075";   // Tu celular — recibe el SMS
-const TWILIO_SMS   = process.env.TWILIO_PHONE_NUMBER; // Tu número de Twilio (el mismo que recibe llamadas)
+const MI_NUMERO    = "+15617141075";
+const TWILIO_SMS   = "+17547036249";  // Número Twilio hardcoded
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
