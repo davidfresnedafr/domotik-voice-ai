@@ -71,7 +71,7 @@ NOISY CALL: Ask to repeat. After 2 failed attempts, offer callback, collect name
 
 COLLECT IN THIS EXACT ORDER — confirm each step before moving to the next:
 1. NAME — ask first. Do not continue without it.
-2. SERVICE — ask "What exactly do you need?" Get specifics: type, quantity, location. Do not continue until specific.
+2. SERVICE — ask "What exactly do you need?" Get ALL specifics: type of cable/equipment, quantity, exact locations (floors, rooms, areas), purpose. If they say something vague like "network" or "cable" ask: "What type of cable? How many runs? From where to where?" Do not continue until you have a complete detailed description.
 3. ADDRESS — ask "What is the full address including city?" Do NOT move to step 4 without a real street address and city.
 4. APPOINTMENT — ONLY after 1+2+3 confirmed. Mon-Fri 8am-6pm normal rate. Saturdays available with extra charge, warn before confirming. No Sundays. Confirm back the exact date and time.
 
@@ -228,7 +228,7 @@ RULES:
 - name: full name of the customer
 - phone: phone number the customer mentioned
 - address: FULL address — number, street, city, and state. If customer said a city in Florida, add ", FL" automatically. Search carefully, may be given in parts. Include apartment/unit/zip if mentioned.
-- service: what the CUSTOMER (lines labeled "Cliente:") said they need. All specifics. Never use Elena's words.
+- service: combine ALL details the CUSTOMER mentioned throughout the call about what they need. Include: type of work, cable types, quantities, floor numbers, room names, areas, equipment brands. Search every "Cliente:" line. Write a complete description even if details were spread across multiple messages.
 - appointment: exact confirmed date and time (e.g. "Saturday March 8 at 10 AM"). Never just "next Saturday".
 Return ONLY valid JSON: { "name": "", "phone": "", "address": "", "service": "", "appointment": "" }
 Use "Not provided" for missing fields.`,
